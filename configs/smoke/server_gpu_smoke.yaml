@@ -1,0 +1,69 @@
+extends: ../base.yaml
+
+run:
+  name: server_gpu_smoke
+
+env:
+  require_dotenv_file: true
+
+integrations:
+  wandb:
+    enabled: false
+  hf_hub:
+    enabled: false
+    push_to_hub: false
+
+model:
+  model_name_or_path: Qwen/Qwen2.5-0.5B-Instruct
+  attn_implementation: sdpa
+  max_prompt_length: 256
+  max_completion_length: 128
+
+lora:
+  enabled: false
+
+rollout:
+  mode: cppo
+  num_generations: 4
+  use_vllm: true
+  vllm_mode: colocate
+  vllm_gpu_memory_utilization: 0.40
+  vllm_enable_sleep_mode: false
+  cppo:
+    pruning: 0.5
+    metric: smallest
+    allocation: true
+
+training:
+  max_steps: 10
+  batch_size: 1
+  gradient_accumulation_steps: 8
+  generation_batch_size: 8
+  learning_rate: 1.0e-6
+  bf16: false
+  save_steps: 5
+  logging_steps: 1
+
+eval:
+  n_generations: 1
+  batch_size: 2
+  max_new_tokens: 128
+  passk_profiles:
+    enabled: false
+  on_checkpoint:
+    enabled: true
+    splits:
+      - gsm8k_test
+    limit: 10
+  boundary_eval:
+    enabled: false
+  mid_eval:
+    enabled: false
+    quick_local_enabled: false
+    steps: [5, 10]
+    n_problems: 10
+    max_new_tokens: 128
+
+artifacts:
+  save_completions: true
+  max_completions_per_checkpoint: 64

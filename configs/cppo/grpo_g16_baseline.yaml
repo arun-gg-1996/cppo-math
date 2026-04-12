@@ -1,0 +1,12 @@
+extends: ../base.yaml
+
+run:
+  name: grpo_g16_baseline
+
+rollout:
+  mode: grpo
+  num_generations: 16
+  cppo:
+    pruning: 0.0
+    metric: smallest
+    allocation: false

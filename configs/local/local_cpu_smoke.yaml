@@ -1,0 +1,64 @@
+extends: ../base.yaml
+
+run:
+  name: local_cpu_smoke
+
+env:
+  require_dotenv_file: false
+
+integrations:
+  wandb:
+    enabled: false
+  hf_hub:
+    enabled: false
+    push_to_hub: false
+
+model:
+  model_name_or_path: sshleifer/tiny-gpt2
+  attn_implementation: sdpa
+  max_prompt_length: 256
+  max_completion_length: 64
+  chat_template: |
+    {% for message in messages %}
+    {% if message['role'] == 'system' %}System: {{ message['content'] }}
+    {% elif message['role'] == 'user' %}User: {{ message['content'] }}
+    {% elif message['role'] == 'assistant' %}Assistant: {{ message['content'] }}
+    {% endif %}
+    {% endfor %}
+    {% if add_generation_prompt %}Assistant:{% endif %}
+
+lora:
+  enabled: false
+
+rollout:
+  mode: cppo
+  num_generations: 4
+  use_vllm: false
+  cppo:
+    pruning: 0.5
+    metric: smallest
+    allocation: false
+
+training:
+  max_steps: 2
+  batch_size: 2
+  gradient_accumulation_steps: 4
+  generation_batch_size: 4
+  learning_rate: 1.0e-6
+  bf16: false
+  save_steps: 1
+  logging_steps: 1
+
+eval:
+  n_generations: 1
+  batch_size: 2
+  max_new_tokens: 64
+  on_checkpoint:
+    enabled: false
+  boundary_eval:
+    enabled: false
+  mid_eval:
+    enabled: false
+
+artifacts:
+  save_completions: false

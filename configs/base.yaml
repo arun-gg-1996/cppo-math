@@ -1,0 +1,251 @@
+run:
+  seed: 42
+  output_root: runs
+
+env:
+  require_dotenv_file: true
+  dotenv_path: .env
+
+integrations:
+  wandb:
+    enabled: true
+    project: cppo
+    run_name: cppo
+    api_key_env: WANDB_API_KEY
+  hf_hub:
+    enabled: true
+    push_to_hub: true
+    hub_model_id: cppo-g16-p0875
+    token_env: HF_TOKEN
+
+data:
+  train_path: data/clean/train.jsonl
+  eval_splits:
+    gsm8k_test: data/clean/gsm8k_test.jsonl
+    svamp: data/clean/svamp.jsonl
+    gsm_plus: data/clean/gsm_plus.jsonl
+    asdiv: data/clean/asdiv.jsonl
+    aime_2024: data/clean/aime_2024.jsonl
+    aime_2025: data/clean/aime_2025.jsonl
+    math_500: data/clean/math_500.jsonl
+    amc_2023: data/clean/amc_2023.jsonl
+    minerva_math: data/clean/minerva_math.jsonl
+    olympiadbench: data/clean/olympiadbench.jsonl
+
+prompt:
+  system_prompt: |
+    A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+    The assistant first thinks about the reasoning process in the mind and then provides the user with the answer.
+    The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e.,
+    <think> reasoning process here </think>
+    <answer> answer here </answer>.
+  eval_system_prompt_by_split:
+    gsm8k_test: |
+      A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+      Output exactly:
+      <think>...</think>
+      <answer>FINAL_NUMERIC_ANSWER</answer>
+    svamp: |
+      A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+      Output exactly:
+      <think>...</think>
+      <answer>FINAL_NUMERIC_ANSWER</answer>
+    amc_2023: |
+      A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+      Output exactly:
+      <think>...</think>
+      <answer>FINAL_NUMERIC_ANSWER</answer>
+    math_500: |
+      A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+      Output exactly:
+      <think>...</think>
+      <answer>FINAL_MATH_EXPRESSION_OR_NUMBER</answer>
+    gsm_plus: |
+      A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+      Output exactly:
+      <think>...</think>
+      <answer>FINAL_ANSWER</answer>
+      If the problem is underspecified and no unique value can be determined, return:
+      <answer>None</answer>
+    asdiv: |
+      A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+      Output exactly:
+      <think>...</think>
+      <answer>FINAL_ANSWER</answer>
+      Prefer a concise final value (number or expression).
+    aime_2024: |
+      A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+      Output exactly:
+      <think>...</think>
+      <answer>FINAL_NUMERIC_ANSWER</answer>
+    aime_2025: |
+      A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+      Output exactly:
+      <think>...</think>
+      <answer>FINAL_NUMERIC_ANSWER</answer>
+    minerva_math: |
+      A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+      Output exactly:
+      <think>...</think>
+      <answer>FINAL_MATH_EXPRESSION_OR_NUMBER</answer>
+    olympiadbench: |
+      A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
+      Output exactly:
+      <think>...</think>
+      <answer>FINAL_MATH_EXPRESSION_OR_NUMBER</answer>
+
+model:
+  model_name_or_path: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+  attn_implementation: sdpa
+  max_prompt_length: 1024
+  max_completion_length: 8192
+
+lora:
+  enabled: true
+  rank: 64
+  alpha: 128
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+rollout:
+  mode: cppo
+  num_generations: 16
+  temperature: 1.0
+  beta: 0.04
+  use_vllm: true
+  vllm_mode: server
+  vllm_server_base_url: http://127.0.0.1:8000
+  vllm_server_host: 127.0.0.1
+  vllm_server_port: 8000
+  vllm_server_timeout: 240.0
+  vllm_group_port: 51216
+  vllm_gpu_memory_utilization: 0.50
+  vllm_enable_sleep_mode: false
+  cppo:
+    pruning: 0.875
+    metric: smallest
+    allocation: true
+    strategy: author_exact
+
+reward:
+  accuracy_weight: 0.8
+  format_weight: 0.2
+
+training:
+  world_size: 1
+  max_steps: 1040
+  batch_size: 16
+  gradient_accumulation_steps: 16
+  generation_batch_size: 256
+  num_iterations: 1
+  learning_rate: 1.0e-6
+  weight_decay: 0.0
+  warmup_steps: 20
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  logging_steps: 1
+  save_steps: 100
+  save_total_limit: 50
+  gradient_checkpointing: true
+  dataloader_drop_last: true
+  remove_unused_columns: false
+  bf16: true
+
+eval:
+  primary_split: gsm8k_test
+  n_generations: 1
+  batch_size: 8
+  temperature: 0.6
+  top_p: 1.0
+  max_new_tokens: 1024
+  passk_profiles:
+    enabled: true
+    profiles:
+      pass1_strict:
+        enabled: true
+        report_k: 1
+        n_generations: 1
+        temperature: 0.0
+        top_p: 1.0
+      pass3:
+        enabled: true
+        report_k: 3
+        n_generations: 3
+        temperature: 0.6
+        top_p: 0.95
+  truncation_retry:
+    enabled: true
+    max_retries: 1
+    retry_max_new_tokens: 2048
+  adapter_merge:
+    cleanup_after_eval: true
+  evaluator:
+    default_backend: auto
+    backend_by_split: {}
+    custom_by_split: {}
+    math_verify:
+      enabled: true
+      splits:
+        - gsm8k
+        - gsm8k_test
+        - svamp
+        - gsm_plus
+        - asdiv
+        - aime_2024
+        - aime_2025
+        - amc_2023
+  mid_splits:
+    - gsm8k_test
+    - svamp
+    - math_500
+    - amc_2023
+  boundary_splits:
+    - gsm_plus
+    - asdiv
+    - aime_2024
+    - aime_2025
+    - minerva_math
+    - olympiadbench
+  on_checkpoint:
+    enabled: true
+    splits:
+      - gsm8k_test
+      - svamp
+      - math_500
+      - amc_2023
+    limit: 0
+  boundary_eval:
+    enabled: true
+    run_at_start: true
+    run_at_end: true
+    limit: 0
+  mid_eval:
+    enabled: false
+    quick_local_enabled: false
+    steps: [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1040]
+    n_problems: 30
+    max_new_tokens: 1024
+
+artifacts:
+  save_completions: true
+  max_completions_per_checkpoint: 256
+  retention:
+    enabled: false
+    keep_best_k: 3
+    keep_last_n: 2
+
+observability:
+  refs:
+    kl_ref_floor: 0.001
+    kl_ref_ceiling: 0.10
+    clip_ratio/ref_min: 0.005
+    grpo/reward_std_ref_floor: 0.05
+    grpo/all_zero_ref_max: 0.50
+    grpo/all_perfect_ref_max: 0.50

@@ -1,0 +1,13 @@
+extends: configs/cppo/cppo_g16_p0875.yaml
+
+env:
+  require_dotenv_file: true
+  dotenv_path: .env
+
+integrations:
+  wandb:
+    enabled: true
+    api_key_env: WANDB_API_KEY
+  hf_hub:
+    enabled: true
+    token_env: HF_TOKEN

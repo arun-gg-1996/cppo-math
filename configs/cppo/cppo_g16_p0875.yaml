@@ -1,0 +1,12 @@
+extends: ../base.yaml
+
+run:
+  name: cppo_g16_p0875
+
+rollout:
+  mode: cppo
+  num_generations: 16
+  cppo:
+    pruning: 0.875
+    metric: smallest
+    allocation: true

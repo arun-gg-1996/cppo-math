@@ -1,0 +1,25 @@
+# CPPO/GRPO training environment (pinned)
+# Python: 3.10.x
+
+torch==2.8.0
+transformers==5.4.0
+trl==0.29.1
+peft==0.18.1
+accelerate==1.13.0
+vllm==0.11.0
+
+datasets==4.8.4
+numpy==1.26.4
+sympy==1.14.0
+antlr4-python3-runtime==4.11.0
+math-verify==0.9.0
+tqdm==4.67.3
+python-dotenv==1.2.2
+
+huggingface_hub==1.8.0
+tokenizers==0.22.2
+safetensors==0.7.0
+sentencepiece==0.2.1
+pydantic==2.12.5
+
+wandb==0.25.1

@@ -1,0 +1,11 @@
+extends: ./server_gpu_smoke.yaml
+
+run:
+  name: server_gpu_split_smoke
+
+rollout:
+  vllm_mode: server
+  vllm_server_base_url: http://127.0.0.1:8000
+  vllm_server_host: 127.0.0.1
+  vllm_server_port: 8000
+  vllm_server_timeout: 120.0

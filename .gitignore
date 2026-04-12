@@ -1,0 +1,30 @@
+# Python / virtualenv
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# OS/editor noise
+.DS_Store
+*.swp
+*.swo
+
+# Runtime artifacts
+runs/
+results/
+checkpoints/
+*.log
+
+# Local data artifacts (generated/downloaded)
+data/clean/
+
+# Local agent-only notes/journal (not for GitHub)
+docs/progress_journal/
