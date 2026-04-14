@@ -64,6 +64,12 @@ source .venv/bin/activate
 - writes/updates those keys in `.env` while preserving unrelated keys
 - runs `wandb login` and `hf auth login`
 
+Build datasets before smoke/full training:
+
+```bash
+python data/download.py
+```
+
 `.env` is required by default. Training fails fast if:
 - `.env` is missing, or
 - `integrations.wandb.enabled=true` but W&B token env var is missing, or
@@ -97,6 +103,12 @@ Terminal B (policy training on GPU 0):
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config config.yaml
+```
+
+Quiet full split-GPU training (suppresses TRL completion/reward debug table):
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config config.yaml --set artifacts.save_completions=false --set training.logging_steps=10
 ```
 
 Using `screen` (recommended on remote servers):
@@ -179,6 +191,12 @@ Terminal B:
 CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config configs/smoke/server_gpu_split_smoke.yaml
 ```
 
+Quiet split-GPU smoke (suppresses TRL completion/reward debug table):
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config configs/smoke/server_gpu_split_smoke.yaml --set artifacts.save_completions=false --set training.logging_steps=10
+```
+
 Override any field with dotted keys:
 
 ```bash
@@ -251,6 +269,7 @@ Mid-eval collision guard:
 - periodic mid-run eval should use `eval.on_checkpoint` (this logs to W&B and writes local pass@k artifacts).
 - `eval.mid_eval` is an optional quick-local debug path and is disabled by default.
 - if quick-local mid-eval is enabled and collides with checkpoint/boundary steps, those steps are skipped to avoid double evaluation.
+- in split server mode, automatic checkpoint/boundary eval uses the configured vLLM server endpoint (`/generate/`) instead of starting a second local vLLM engine on GPU0.
 
 If these JSONL files are missing under `data/clean/`, build them with:
 

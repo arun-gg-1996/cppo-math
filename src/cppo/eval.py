@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import requests
 from transformers import AutoTokenizer
 
 from .evaluator_registry import EvaluatorRegistry
@@ -311,6 +313,70 @@ def _is_truncated_generation(item: Any, max_new_tokens: int) -> bool:
     return False
 
 
+@dataclass
+class _EvalGeneration:
+    """Unified completion payload for local/server vLLM generation paths."""
+
+    text: str
+    token_ids: list[int]
+    finish_reason: str = ""
+    stop_reason: str = ""
+
+
+def _server_generate(
+    *,
+    base_url: str,
+    prompts: list[str],
+    n: int,
+    temperature: float,
+    top_p: float,
+    max_tokens: int,
+    timeout_s: float,
+    tokenizer: AutoTokenizer,
+) -> list[list[_EvalGeneration]]:
+    """Generate completions via TRL vLLM server `/generate/` endpoint."""
+    clean_base = base_url.rstrip("/")
+    if not clean_base:
+        raise ValueError("vLLM server base URL is empty.")
+    url = f"{clean_base}/generate/"
+    payload = {
+        "prompts": prompts,
+        "n": int(n),
+        "temperature": float(temperature),
+        "top_p": float(top_p),
+        "max_tokens": int(max_tokens),
+    }
+
+    resp = requests.post(url, json=payload, timeout=float(timeout_s))
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        body = resp.text[:500] if resp is not None else ""
+        raise RuntimeError(f"vLLM server request failed: {e}. body={body!r}") from e
+
+    data = resp.json()
+    completion_ids = data.get("completion_ids", [])
+    if not isinstance(completion_ids, list):
+        raise RuntimeError("Invalid vLLM server response: missing completion_ids list.")
+
+    expected = len(prompts) * int(n)
+    if len(completion_ids) != expected:
+        raise RuntimeError(
+            "Unexpected vLLM server completion count: "
+            f"expected={expected} got={len(completion_ids)}"
+        )
+
+    grouped: list[list[_EvalGeneration]] = [[] for _ in prompts]
+    for flat_idx, ids in enumerate(completion_ids):
+        if not isinstance(ids, list):
+            raise RuntimeError("Invalid vLLM server response: completion_ids must be list[list[int]].")
+        req_idx = flat_idx // int(n)
+        tok_ids = [int(x) for x in ids]
+        text = tokenizer.decode(tok_ids, skip_special_tokens=True)
+        grouped[req_idx].append(_EvalGeneration(text=text, token_ids=tok_ids))
+    return grouped
+
+
 def evaluate_checkpoint(
     *,
     ckpt: str,
@@ -328,10 +394,11 @@ def evaluate_checkpoint(
     truncation_retry_enabled: bool = False,
     truncation_retry_max_retries: int = 0,
     truncation_retry_max_new_tokens: int | None = None,
+    use_vllm_server: bool = False,
+    vllm_server_base_url: str = "",
+    vllm_server_timeout: float = 240.0,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Evaluate one checkpoint on one split and return summary + per-problem details."""
-    from vllm import LLM, SamplingParams
-
     eval_model = _resolve_eval_model_path(ckpt, hf_token)
 
     problems = _read_jsonl(split_path)
@@ -343,23 +410,57 @@ def evaluate_checkpoint(
     tokenizer = AutoTokenizer.from_pretrained(eval_model, trust_remote_code=True, token=(hf_token or None))
     prompts = [_render_prompt(tokenizer, system_prompt, str(p["question"])) for p in problems]
 
-    sampling = SamplingParams(
-        temperature=temperature,
-        top_p=top_p,
-        n=n_generations,
-        max_tokens=max_new_tokens,
-    )
-
+    use_server = bool(use_vllm_server) and bool(str(vllm_server_base_url).strip())
+    llm = None
+    SamplingParams = None
     logger.info(
-        "Evaluating checkpoint=%s resolved_model=%s split=%s n=%d n_gen=%d batch=%d",
+        "Evaluating checkpoint=%s resolved_model=%s split=%s n=%d n_gen=%d batch=%d generation_backend=%s",
         ckpt,
         eval_model,
         split_name,
         len(problems),
         n_generations,
         batch_size,
+        "vllm_server" if use_server else "local_vllm",
     )
-    llm = LLM(model=eval_model, trust_remote_code=True)
+    if not use_server:
+        from vllm import LLM, SamplingParams as _SamplingParams
+
+        SamplingParams = _SamplingParams
+        llm = LLM(model=eval_model, trust_remote_code=True)
+
+    def _generate(prompts_batch: list[str], *, n: int, max_tokens: int) -> list[list[_EvalGeneration]]:
+        if use_server:
+            return _server_generate(
+                base_url=str(vllm_server_base_url),
+                prompts=prompts_batch,
+                n=n,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+                timeout_s=float(vllm_server_timeout),
+                tokenizer=tokenizer,
+            )
+        assert llm is not None and SamplingParams is not None
+        sampling = SamplingParams(
+            temperature=temperature,
+            top_p=top_p,
+            n=n,
+            max_tokens=max_tokens,
+        )
+        outputs = llm.generate(prompts_batch, sampling)
+        return [
+            [
+                _EvalGeneration(
+                    text=str(item.text),
+                    token_ids=[int(x) for x in (getattr(item, "token_ids", []) or [])],
+                    finish_reason=str(getattr(item, "finish_reason", "") or ""),
+                    stop_reason=str(getattr(item, "stop_reason", "") or ""),
+                )
+                for item in out.outputs
+            ]
+            for out in outputs
+        ]
 
     details: list[dict[str, Any]] = []
     evaluator = EvaluatorRegistry(evaluator_cfg)
@@ -375,18 +476,10 @@ def evaluate_checkpoint(
     for i in range(0, len(problems), batch_size):
         batch_problems = problems[i : i + batch_size]
         batch_prompts = prompts[i : i + batch_size]
-        outputs = llm.generate(batch_prompts, sampling)
-
-        batch_completions: list[list[Any]] = [list(out.outputs) for out in outputs]
+        batch_completions = _generate(batch_prompts, n=n_generations, max_tokens=max_new_tokens)
 
         if do_retry:
             max_retries = int(truncation_retry_max_retries)
-            retry_sampling = SamplingParams(
-                temperature=temperature,
-                top_p=top_p,
-                n=1,
-                max_tokens=retry_max_tokens,
-            )
             retry_jobs: list[tuple[int, int]] = []
             for req_idx, req_outs in enumerate(batch_completions):
                 for gen_idx, item in enumerate(req_outs):
@@ -398,12 +491,12 @@ def evaluate_checkpoint(
                 if not retry_jobs:
                     break
                 retry_prompts = [batch_prompts[req_idx] for req_idx, _ in retry_jobs]
-                retry_outputs = llm.generate(retry_prompts, retry_sampling)
+                retry_outputs = _generate(retry_prompts, n=1, max_tokens=retry_max_tokens)
 
                 next_retry_jobs: list[tuple[int, int]] = []
                 for (req_idx, gen_idx), retry_out in zip(retry_jobs, retry_outputs, strict=True):
-                    if retry_out.outputs:
-                        new_item = retry_out.outputs[0]
+                    if retry_out:
+                        new_item = retry_out[0]
                         batch_completions[req_idx][gen_idx] = new_item
                         retry_count += 1
                         if _is_truncated_generation(new_item, retry_max_tokens):
@@ -468,6 +561,7 @@ def evaluate_checkpoint(
             "retry_candidates": int(retry_candidates),
             "retry_count": int(retry_count),
         },
+        "generation_backend": "vllm_server" if use_server else "local_vllm",
     }
     return summary, details
 

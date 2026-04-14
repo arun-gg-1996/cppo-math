@@ -552,6 +552,12 @@ def _run_boundary_eval_stage(
     truncation_retry_cfg = eval_cfg.get("truncation_retry", {})
     profiles = build_eval_profiles(eval_cfg)
     multi_profile = len(profiles) > 1
+    rollout_cfg = cfg.get("rollout", {})
+    use_server_eval = bool(rollout_cfg.get("use_vllm", True)) and str(rollout_cfg.get("vllm_mode", "")).strip().lower() == "server"
+    server_base_url = str(rollout_cfg.get("vllm_server_base_url", "")).strip()
+    if not server_base_url:
+        use_server_eval = False
+    server_timeout = float(rollout_cfg.get("vllm_server_timeout", 240.0))
 
     out_root = run_dir / "eval_boundary" / stage
     out_root.mkdir(parents=True, exist_ok=True)
@@ -588,6 +594,9 @@ def _run_boundary_eval_stage(
                 truncation_retry_max_new_tokens=int(
                     truncation_retry_cfg.get("retry_max_new_tokens", int(eval_cfg.get("max_new_tokens", 1024)))
                 ),
+                use_vllm_server=bool(use_server_eval),
+                vllm_server_base_url=server_base_url,
+                vllm_server_timeout=server_timeout,
             )
             split_out = out_root / split
             if multi_profile:

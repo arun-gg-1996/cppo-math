@@ -20,6 +20,12 @@ source .venv/bin/activate
 
 `setup_env.sh` prompts for `WANDB_API_KEY` and `HF_TOKEN` (hidden input), updates `.env`, and runs `wandb login` + `hf auth login`.
 
+Build datasets before server smoke/full run:
+
+```bash
+python data/download.py
+```
+
 ## 1) Local Mac (no GPU) - rigorous pass
 
 ### 1.1 Static compile + import sanity
@@ -139,6 +145,12 @@ source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config configs/smoke/server_gpu_split_smoke.yaml
 ```
 
+Quiet smoke option (suppresses TRL completion/reward debug table):
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config configs/smoke/server_gpu_split_smoke.yaml --set artifacts.save_completions=false --set training.logging_steps=10
+```
+
 Detach: `Ctrl-a d`
 
 ### 2.3 Check screens and logs
@@ -197,6 +209,12 @@ source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config config.yaml
 ```
 
+Quiet full-run option (suppresses TRL completion/reward debug table):
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config config.yaml --set artifacts.save_completions=false --set training.logging_steps=10
+```
+
 Detach: `Ctrl-a d`
 
 ### 3.3 Post-run verification
@@ -218,6 +236,7 @@ What this also does now:
 - if checkpoint-100 is adapter-only, eval auto-merges adapter + base into `_merged_eval_model` under that checkpoint and evaluates the merged path.
 - by default, that temporary merged folder is cleaned automatically after eval (`eval.adapter_merge.cleanup_after_eval=true`).
 - by default, eval runs strict `pass@1` and best-of-3 `pass@3` as separate decode profiles and merges both metrics into split summary.
+- in split server mode, automatic checkpoint/boundary eval uses the configured vLLM server endpoint (`/generate/`) rather than starting a second local vLLM engine on GPU0.
 
 ## 4) W&B metric checklist
 
