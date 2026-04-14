@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,8 @@ class CheckpointArtifactsCallback(TrainerCallback):
         self.checkpoints_root = self.run_dir / "checkpoints"
         self.index_path = self.run_dir / "checkpoint_index.json"
         self._trainer_ref = None
+        self.eval_last_seconds = 0.0
+        self.eval_total_seconds = 0.0
 
     def set_trainer(self, trainer: Any) -> None:
         """Store trainer reference for post-save helper calls."""
@@ -245,22 +248,36 @@ class CheckpointArtifactsCallback(TrainerCallback):
 
         primary_metric: float | None = None
         split_metrics: dict[str, Any] = {}
+        eval_started = time.perf_counter()
+        eval_elapsed = 0.0
         try:
             primary_metric, split_metrics = self._evaluate_checkpoint(checkpoint_dir)
         except Exception as e:
             logger.warning("Checkpoint eval failed at step=%d (%s)", step, e, exc_info=True)
         finally:
+            eval_elapsed = float(time.perf_counter() - eval_started)
+            self.eval_last_seconds = eval_elapsed
+            self.eval_total_seconds += eval_elapsed
+            logger.info(
+                "Checkpoint eval timing step=%d seconds=%.2f cumulative=%.2f",
+                step,
+                eval_elapsed,
+                self.eval_total_seconds,
+            )
             adapter_merge_cfg = self.cfg.get("eval", {}).get("adapter_merge", {})
             if bool(adapter_merge_cfg.get("cleanup_after_eval", True)):
                 cleanup_merged_eval_model(str(checkpoint_dir))
 
-        if split_metrics and wandb is not None and wandb.run is not None:
+        if wandb is not None and wandb.run is not None:
             wb_payload: dict[str, float] = {}
-            for split, summary in split_metrics.items():
-                n_probs = int(summary.get("n_problems", 0))
-                for key, value in summary.items():
-                    if isinstance(key, str) and key.startswith("pass@"):
-                        wb_payload[f"eval/{split}_n{n_probs}/{key}"] = float(value)
+            if split_metrics:
+                for split, summary in split_metrics.items():
+                    n_probs = int(summary.get("n_problems", 0))
+                    for key, value in summary.items():
+                        if isinstance(key, str) and key.startswith("pass@"):
+                            wb_payload[f"eval/{split}_n{n_probs}/{key}"] = float(value)
+            wb_payload["eval_timing/checkpoint_seconds"] = float(eval_elapsed)
+            wb_payload["eval_timing/checkpoint_cumulative_seconds"] = float(self.eval_total_seconds)
             if wb_payload:
                 wandb.log(wb_payload, step=step)
 
@@ -277,6 +294,8 @@ class CheckpointArtifactsCallback(TrainerCallback):
             "checkpoint_dir": str(checkpoint_dir.resolve()),
             "saved_at": datetime.utcnow().isoformat() + "Z",
             "primary_metric": primary_metric,
+            "eval_seconds": float(eval_elapsed),
+            "eval_cumulative_seconds": float(self.eval_total_seconds),
             "split_metrics": split_metrics,
         }
         rows = append_checkpoint_row(self.index_path, row)

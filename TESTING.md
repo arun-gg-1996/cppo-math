@@ -99,6 +99,7 @@ Verify full run outputs:
 
 ```bash
 python scripts/verify_run.py --expect-eval
+cat runs/<run_id>/timing_summary.json
 ```
 
 ## Options (Only If Needed)

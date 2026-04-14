@@ -60,6 +60,7 @@ Detach with `Ctrl-a d`.
 
 ```bash
 python scripts/verify_run.py --expect-eval
+cat runs/<run_id>/timing_summary.json
 ```
 
 Re-attach logs if needed:

@@ -16,6 +16,7 @@ import logging
 import os
 import platform
 import random
+import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -532,16 +533,17 @@ def _run_boundary_eval_stage(
     stage: str,
     run_dir: Path,
     step: int | None = None,
-) -> None:
+) -> float:
     """Run start/end boundary evaluation suite and persist per-split artifacts."""
     eval_cfg = cfg.get("eval", {})
     boundary_cfg = eval_cfg.get("boundary_eval", {})
     if not bool(boundary_cfg.get("enabled", True)):
-        return
+        return 0.0
 
     boundary_splits = [str(x) for x in eval_cfg.get("boundary_splits", [])]
     if not boundary_splits:
-        return
+        return 0.0
+    started = time.perf_counter()
 
     split_map = cfg.get("data", {}).get("eval_splits", {})
     prompt_cfg = cfg.get("prompt", {})
@@ -638,6 +640,12 @@ def _run_boundary_eval_stage(
     adapter_merge_cfg = eval_cfg.get("adapter_merge", {})
     if bool(adapter_merge_cfg.get("cleanup_after_eval", True)):
         cleanup_merged_eval_model(str(ckpt))
+    elapsed = float(time.perf_counter() - started)
+    aggregate["timing_seconds"] = elapsed
+    with (out_root / "summary.json").open("w", encoding="utf-8") as f:
+        json.dump(aggregate, f, ensure_ascii=False, indent=2)
+    logger.info("Boundary eval stage=%s finished in %.2fs", stage, elapsed)
+    return elapsed
 
 
 def _run_on_checkpoint_eval_stage(
@@ -647,14 +655,14 @@ def _run_on_checkpoint_eval_stage(
     stage: str,
     run_dir: Path,
     step: int | None = None,
-) -> None:
+) -> float:
     """Run the `eval.on_checkpoint` split suite outside trainer save hooks (e.g., step 0)."""
     eval_cfg = cfg.get("eval", {})
     on_ckpt = eval_cfg.get("on_checkpoint", {})
     if not bool(on_ckpt.get("enabled", False)):
-        return
+        return 0.0
     if stage == "start" and not bool(on_ckpt.get("run_at_start", False)):
-        return
+        return 0.0
 
     split_map = cfg.get("data", {}).get("eval_splits", {})
     prompt_cfg = cfg.get("prompt", {})
@@ -663,7 +671,8 @@ def _run_on_checkpoint_eval_stage(
     primary_split = str(eval_cfg.get("primary_split", ""))
     split_order = on_ckpt.get("splits") or ([primary_split] if primary_split else list(split_map.keys()))
     if not split_order:
-        return
+        return 0.0
+    started = time.perf_counter()
 
     hub_cfg = cfg.get("integrations", {}).get("hf_hub", {})
     token_env = str(hub_cfg.get("token_env", "HF_TOKEN"))
@@ -757,10 +766,23 @@ def _run_on_checkpoint_eval_stage(
     adapter_merge_cfg = eval_cfg.get("adapter_merge", {})
     if bool(adapter_merge_cfg.get("cleanup_after_eval", True)):
         cleanup_merged_eval_model(str(ckpt))
+    elapsed = float(time.perf_counter() - started)
+    aggregate["timing_seconds"] = elapsed
+    with (out_root / "summary.json").open("w", encoding="utf-8") as f:
+        json.dump(aggregate, f, ensure_ascii=False, indent=2)
+    if wandb is not None and wandb.run is not None:
+        payload = {f"eval_timing/on_checkpoint_{stage}_seconds": elapsed}
+        if step is None:
+            wandb.log(payload)
+        else:
+            wandb.log(payload, step=int(step))
+    logger.info("On-checkpoint eval stage=%s finished in %.2fs", stage, elapsed)
+    return elapsed
 
 
 def main(config_path: str, overrides: list[str]) -> None:
     """Execute a full training run from a YAML config."""
+    run_wall_started = time.perf_counter()
     cfg = load_config(config_path, overrides=overrides)
     global RUN_REF_LINES
     global RUN_REWARD_ACCURACY_WEIGHT
@@ -836,9 +858,10 @@ def main(config_path: str, overrides: list[str]) -> None:
 
     grpo_args = _build_grpo_config(cfg, run_dir=run_dir)
 
+    checkpoint_cb = CheckpointArtifactsCallback(cfg=cfg, resolved_config_path=resolved_config_path)
     callbacks: list[TrainerCallback] = [
         RewardStatsCallback(),
-        CheckpointArtifactsCallback(cfg=cfg, resolved_config_path=resolved_config_path),
+        checkpoint_cb,
     ]
 
     mid_eval_cfg = cfg.get("eval", {}).get("mid_eval", {})
@@ -908,9 +931,12 @@ def main(config_path: str, overrides: list[str]) -> None:
             cb.set_trainer(trainer)
 
     boundary_cfg = cfg.get("eval", {}).get("boundary_eval", {})
+    boundary_eval_start_seconds = 0.0
+    on_checkpoint_start_seconds = 0.0
+    boundary_eval_end_seconds = 0.0
     if bool(boundary_cfg.get("enabled", True)) and bool(boundary_cfg.get("run_at_start", True)):
         logger.info("Running boundary eval at start (base model)")
-        _run_boundary_eval_stage(
+        boundary_eval_start_seconds = _run_boundary_eval_stage(
             cfg=cfg,
             ckpt=str(model_cfg["model_name_or_path"]),
             stage="start",
@@ -921,7 +947,7 @@ def main(config_path: str, overrides: list[str]) -> None:
     on_ckpt_cfg = cfg.get("eval", {}).get("on_checkpoint", {})
     if bool(on_ckpt_cfg.get("enabled", False)) and bool(on_ckpt_cfg.get("run_at_start", False)):
         logger.info("Running on-checkpoint eval at start (base model)")
-        _run_on_checkpoint_eval_stage(
+        on_checkpoint_start_seconds = _run_on_checkpoint_eval_stage(
             cfg=cfg,
             ckpt=str(model_cfg["model_name_or_path"]),
             stage="start",
@@ -935,7 +961,9 @@ def main(config_path: str, overrides: list[str]) -> None:
         run["id"],
         checkpoints_root,
     )
+    train_loop_started = time.perf_counter()
     trainer.train()
+    train_loop_wall_seconds = float(time.perf_counter() - train_loop_started)
 
     final_dir = checkpoints_root / "final"
     trainer.save_model(str(final_dir))
@@ -943,13 +971,37 @@ def main(config_path: str, overrides: list[str]) -> None:
 
     if bool(boundary_cfg.get("enabled", True)) and bool(boundary_cfg.get("run_at_end", True)):
         logger.info("Running boundary eval at end (final checkpoint)")
-        _run_boundary_eval_stage(
+        boundary_eval_end_seconds = _run_boundary_eval_stage(
             cfg=cfg,
             ckpt=str(final_dir),
             stage="end",
             run_dir=run_dir,
             step=int(train_cfg.get("max_steps", 0)),
         )
+
+    checkpoint_eval_seconds = float(getattr(checkpoint_cb, "eval_total_seconds", 0.0))
+    total_eval_seconds = float(
+        on_checkpoint_start_seconds + boundary_eval_start_seconds + checkpoint_eval_seconds + boundary_eval_end_seconds
+    )
+    train_loop_estimated_train_only_seconds = float(max(0.0, train_loop_wall_seconds - checkpoint_eval_seconds))
+    run_total_wall_seconds = float(time.perf_counter() - run_wall_started)
+    timing_summary = {
+        "run_id": str(run.get("id", "")),
+        "train_loop_wall_seconds": train_loop_wall_seconds,
+        "checkpoint_eval_seconds": checkpoint_eval_seconds,
+        "on_checkpoint_start_seconds": on_checkpoint_start_seconds,
+        "boundary_eval_start_seconds": boundary_eval_start_seconds,
+        "boundary_eval_end_seconds": boundary_eval_end_seconds,
+        "total_eval_seconds": total_eval_seconds,
+        "train_loop_estimated_train_only_seconds": train_loop_estimated_train_only_seconds,
+        "run_total_wall_seconds": run_total_wall_seconds,
+    }
+    with (run_dir / "timing_summary.json").open("w", encoding="utf-8") as f:
+        json.dump(timing_summary, f, ensure_ascii=False, indent=2)
+    if wandb is not None and wandb.run is not None:
+        step = int(getattr(getattr(trainer, "state", None), "global_step", int(train_cfg.get("max_steps", 0))))
+        wb_payload = {f"timing/{k}": float(v) for k, v in timing_summary.items() if isinstance(v, (int, float))}
+        wandb.log(wb_payload, step=step)
 
     logger.info("Training complete. Final checkpoint: %s", final_dir)
 
