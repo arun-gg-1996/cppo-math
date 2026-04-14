@@ -115,6 +115,31 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _ensure_wandb_run_started(cfg: dict[str, Any]) -> None:
+    """Start a W&B run early so pre-train step-0 eval can be logged."""
+    if wandb is None:
+        return
+    wandb_cfg = cfg.get("integrations", {}).get("wandb", {})
+    if not bool(wandb_cfg.get("enabled", False)):
+        return
+    if wandb.run is not None:
+        return
+    try:
+        kwargs: dict[str, Any] = {
+            "project": str(wandb_cfg.get("project", "cppo")),
+            "name": str(wandb_cfg.get("run_name", "cppo")),
+            "reinit": False,
+        }
+        entity = str(wandb_cfg.get("entity", "")).strip()
+        if entity:
+            kwargs["entity"] = entity
+        wandb.init(**kwargs)
+        if wandb.run is not None:
+            logger.info("W&B run initialized early: %s/%s/%s", wandb.run.entity, wandb.run.project, wandb.run.id)
+    except Exception:
+        logger.warning("Failed to initialize W&B run before step-0 eval logging", exc_info=True)
+
+
 def _read_jsonl(path: str) -> list[dict[str, Any]]:
     """Read a JSONL file into a list of dict rows."""
     rows: list[dict[str, Any]] = []
@@ -819,6 +844,7 @@ def main(config_path: str, overrides: list[str]) -> None:
         os.environ.setdefault("WANDB_PROJECT", str(wandb_cfg.get("project", "cppo")))
         api_env = str(wandb_cfg.get("api_key_env", "WANDB_API_KEY"))
         os.environ.setdefault("WANDB_API_KEY", os.environ.get(api_env, ""))
+        _ensure_wandb_run_started(cfg)
 
     set_seed(int(run["seed"]))
 

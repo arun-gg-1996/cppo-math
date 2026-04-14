@@ -99,6 +99,7 @@ Verify full run outputs:
 
 ```bash
 python scripts/verify_run.py --expect-eval
+python scripts/verify_wandb_metrics.py --run <entity>/<project>/<run_id> --require-step0-eval
 cat runs/<run_id>/timing_summary.json
 ```
 
