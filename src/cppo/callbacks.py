@@ -279,7 +279,8 @@ class CheckpointArtifactsCallback(TrainerCallback):
             wb_payload["eval_timing/checkpoint_seconds"] = float(eval_elapsed)
             wb_payload["eval_timing/checkpoint_cumulative_seconds"] = float(self.eval_total_seconds)
             if wb_payload:
-                wandb.log(wb_payload, step=step)
+                wb_payload["train/global_step"] = float(step)
+                wandb.log(wb_payload)
 
         write_checkpoint_meta(
             checkpoint_dir,

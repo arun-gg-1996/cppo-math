@@ -135,6 +135,15 @@ def _ensure_wandb_run_started(cfg: dict[str, Any]) -> None:
             kwargs["entity"] = entity
         wandb.init(**kwargs)
         if wandb.run is not None:
+            try:
+                wandb.define_metric("train/global_step")
+                wandb.define_metric("eval/*", step_metric="train/global_step")
+                wandb.define_metric("eval_boundary/*", step_metric="train/global_step")
+                wandb.define_metric("eval_timing/*", step_metric="train/global_step")
+                wandb.define_metric("mid_eval/*", step_metric="train/global_step")
+                wandb.define_metric("timing/*", step_metric="train/global_step")
+            except Exception:
+                logger.warning("Failed to define W&B metric step mappings", exc_info=True)
             logger.info("W&B run initialized early: %s/%s/%s", wandb.run.entity, wandb.run.project, wandb.run.id)
     except Exception:
         logger.warning("Failed to initialize W&B run before step-0 eval logging", exc_info=True)
@@ -333,7 +342,8 @@ class RewardStatsCallback(TrainerCallback):
                 # Keep custom callback metrics in the same train/* namespace
                 # expected by W&B panels (KL overlays, clip overlays, etc.).
                 wb_payload = {f"train/{k}": float(v) for k, v in agg.items()}
-                wandb.log(wb_payload, step=int(state.global_step))
+                wb_payload["train/global_step"] = float(int(state.global_step))
+                wandb.log(wb_payload)
             except Exception:
                 logger.warning("Failed to log reward stats payload to W&B", exc_info=True)
         REWARD_STATS_BUFFER.clear()
@@ -435,7 +445,12 @@ class MidEvalCallback(TrainerCallback):
         logger.info("mid-eval step=%d pass@1=%.4f", step, pass1)
 
         if wandb is not None and wandb.run is not None:
-            wandb.log({"mid_eval/pass@1": pass1}, step=step)
+            wandb.log(
+                {
+                    "mid_eval/pass@1": pass1,
+                    "train/global_step": float(step),
+                }
+            )
 
         self.done_steps.add(step)
         return control
@@ -646,10 +661,9 @@ def _run_boundary_eval_stage(
                 if isinstance(key, str) and key.startswith("pass@"):
                     payload[f"eval_boundary/{stage}/{split}_n{n_probs}/{key}"] = float(value)
             if payload:
-                if step is None:
-                    wandb.log(payload)
-                else:
-                    wandb.log(payload, step=int(step))
+                if step is not None:
+                    payload["train/global_step"] = float(int(step))
+                wandb.log(payload)
 
         logger.info(
             "Boundary eval stage=%s split=%s pass@1=%.4f pass@3=%s",
@@ -772,10 +786,9 @@ def _run_on_checkpoint_eval_stage(
                 if isinstance(key, str) and key.startswith("pass@"):
                     payload[f"eval/{split}_n{n_probs}/{key}"] = float(value)
             if payload:
-                if step is None:
-                    wandb.log(payload)
-                else:
-                    wandb.log(payload, step=int(step))
+                if step is not None:
+                    payload["train/global_step"] = float(int(step))
+                wandb.log(payload)
 
         logger.info(
             "On-checkpoint eval stage=%s split=%s pass@1=%.4f pass@3=%s",
@@ -797,10 +810,9 @@ def _run_on_checkpoint_eval_stage(
         json.dump(aggregate, f, ensure_ascii=False, indent=2)
     if wandb is not None and wandb.run is not None:
         payload = {f"eval_timing/on_checkpoint_{stage}_seconds": elapsed}
-        if step is None:
-            wandb.log(payload)
-        else:
-            wandb.log(payload, step=int(step))
+        if step is not None:
+            payload["train/global_step"] = float(int(step))
+        wandb.log(payload)
     logger.info("On-checkpoint eval stage=%s finished in %.2fs", stage, elapsed)
     return elapsed
 
@@ -1027,7 +1039,8 @@ def main(config_path: str, overrides: list[str]) -> None:
     if wandb is not None and wandb.run is not None:
         step = int(getattr(getattr(trainer, "state", None), "global_step", int(train_cfg.get("max_steps", 0))))
         wb_payload = {f"timing/{k}": float(v) for k, v in timing_summary.items() if isinstance(v, (int, float))}
-        wandb.log(wb_payload, step=step)
+        wb_payload["train/global_step"] = float(step)
+        wandb.log(wb_payload)
 
     logger.info("Training complete. Final checkpoint: %s", final_dir)
 
