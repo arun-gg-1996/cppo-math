@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Trainer callbacks for checkpoint artifacts, eval, retention, and hub sync."""
+
 import logging
 import json
 from datetime import datetime
@@ -47,9 +49,11 @@ class CheckpointArtifactsCallback(TrainerCallback):
         self._trainer_ref = None
 
     def set_trainer(self, trainer: Any) -> None:
+        """Store trainer reference for post-save helper calls."""
         self._trainer_ref = trainer
 
     def _sync_checkpoint_to_hub(self, checkpoint_dir: Path) -> None:
+        """Push a checkpoint after callback-side files are written."""
         hub_cfg = self.cfg.get("integrations", {}).get("hf_hub", {})
         if not bool(hub_cfg.get("push_to_hub", False)):
             return
@@ -65,6 +69,7 @@ class CheckpointArtifactsCallback(TrainerCallback):
             logger.warning("HF sync failed for checkpoint=%s", checkpoint_dir, exc_info=True)
 
     def _resolve_checkpoint_dir(self, step: int) -> Path | None:
+        """Resolve checkpoint folder for a save step with safe fallback."""
         candidate = self.checkpoints_root / f"checkpoint-{step}"
         if candidate.exists():
             return candidate
@@ -77,6 +82,7 @@ class CheckpointArtifactsCallback(TrainerCallback):
         return all_ckpts[-1] if all_ckpts else None
 
     def _evaluate_checkpoint(self, checkpoint_dir: Path) -> tuple[float | None, dict[str, Any]]:
+        """Run configured on-checkpoint eval and return primary metric + summaries."""
         eval_cfg = self.cfg.get("eval", {})
         on_ckpt = eval_cfg.get("on_checkpoint", {})
         if not bool(on_ckpt.get("enabled", False)):
@@ -157,6 +163,7 @@ class CheckpointArtifactsCallback(TrainerCallback):
         return primary_metric, per_split
 
     def _save_completion_snapshot(self, checkpoint_dir: Path, step: int) -> None:
+        """Persist a capped sample of prompts/completions for auditability."""
         artifacts_cfg = self.cfg.get("artifacts", {})
         if not bool(artifacts_cfg.get("save_completions", True)):
             return
@@ -213,6 +220,7 @@ class CheckpointArtifactsCallback(TrainerCallback):
         )
 
     def on_save(self, args, state, control, **kwargs):
+        """Main save hook: write artifacts, eval, hub sync, and retention prune."""
         if not state.is_world_process_zero:
             return control
 

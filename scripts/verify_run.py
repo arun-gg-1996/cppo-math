@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+"""Sanity checker for run-folder completeness and key training metrics."""
+
 import argparse
 import json
 from pathlib import Path
 
 
 def _find_latest_run(root: Path) -> Path:
+    """Return most recently modified run under `runs/`."""
     runs = [p for p in root.glob("runs/*") if p.is_dir()]
     if not runs:
         raise RuntimeError("No runs found under runs/")
@@ -13,21 +16,25 @@ def _find_latest_run(root: Path) -> Path:
 
 
 def _read_json(path: Path) -> dict:
+    """Load JSON from disk."""
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def _assert_file(path: Path, errors: list[str]) -> None:
+    """Append error if required file is missing."""
     if not path.exists():
         errors.append(f"Missing file: {path}")
 
 
 def _assert_any(paths: list[Path], label: str, errors: list[str]) -> None:
+    """Append error when none of the expected artifacts exist."""
     if not any(p.exists() for p in paths):
         errors.append(f"Missing required artifact group: {label}")
 
 
 def main() -> None:
+    """Validate one run directory and print pass/fail summary."""
     ap = argparse.ArgumentParser(description="Verify a training run folder has expected artifacts and key metrics.")
     ap.add_argument("--run-dir", default="", help="Run directory path. Defaults to latest under runs/.")
     ap.add_argument("--expect-eval", action="store_true", help="Require eval pass@k artifacts.")

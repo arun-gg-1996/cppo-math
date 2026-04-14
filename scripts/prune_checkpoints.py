@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Manual checkpoint retention tool (`keep-best-k` + `keep-last-n`)."""
+
 import argparse
 import sys
 from pathlib import Path
@@ -20,6 +22,7 @@ from cppo.io_artifacts import (
 
 
 def main() -> None:
+    """Preview or apply checkpoint pruning for one run directory."""
     parser = argparse.ArgumentParser(
         description="Prune checkpoint directories by keep-best-k and keep-last-n."
     )

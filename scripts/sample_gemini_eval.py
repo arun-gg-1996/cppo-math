@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Sample-based Gemini sanity check for prompts, extraction, and evaluators."""
+
 import argparse
 import json
 import os
@@ -35,6 +37,7 @@ class SplitSpec:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Read a JSONL file into list of rows."""
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as f:
         for line in f:
@@ -45,6 +48,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _select_indices(n: int, k: int) -> list[int]:
+    """Choose evenly spaced deterministic sample indices."""
     if n <= 0 or k <= 0:
         return []
     if k == 1:
@@ -54,6 +58,7 @@ def _select_indices(n: int, k: int) -> list[int]:
 
 
 def _load_api_key() -> str | None:
+    """Load Gemini/Google API key from env or nearby `.env` files."""
     for key in ("GEMINI_API_KEY", "gemini_api_key", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY"):
         val = os.environ.get(key, "").strip()
         if val:
@@ -74,6 +79,7 @@ def _load_api_key() -> str | None:
 
 
 def _extract_text_from_gemini_response(payload: dict[str, Any]) -> str:
+    """Extract model text from Gemini REST response payload."""
     candidates = payload.get("candidates", [])
     if not candidates:
         return ""
@@ -84,6 +90,7 @@ def _extract_text_from_gemini_response(payload: dict[str, Any]) -> str:
 
 
 def _extract_finish_reason(payload: dict[str, Any]) -> str:
+    """Extract finish reason from Gemini REST response payload."""
     candidates = payload.get("candidates", [])
     if not candidates:
         return ""
@@ -92,6 +99,7 @@ def _extract_finish_reason(payload: dict[str, Any]) -> str:
 
 
 def _extractor_branch(text: str) -> str:
+    """Return which extractor branch would be used for this output text."""
     if extract_answer_tag(text):
         return "answer_tag"
     if extract_boxed(text):
@@ -111,6 +119,7 @@ def _classify_failure(
     extracted: str | None,
     finish_reason: str,
 ) -> tuple[str, str]:
+    """Classify incorrect samples by failure type and owning component."""
     if format_ok and routed_correct:
         return "ok", "none"
 
@@ -136,6 +145,7 @@ def _call_gemini(
     max_tokens: int,
     request_timeout_s: float,
 ) -> tuple[int, dict[str, Any]]:
+    """Call Gemini via Vertex REST API and return status + payload."""
     # Match parent project judge wiring: Vertex AI endpoint with API key auth.
     url = f"https://aiplatform.googleapis.com/v1/publishers/google/models/{model}:generateContent?key={api_key}"
     body = {
@@ -158,6 +168,7 @@ def _call_gemini(
 
 
 def main() -> None:
+    """Run sample-based Gemini pipeline validation and write report JSON."""
     ap = argparse.ArgumentParser(description="Sample eval rows from each source, query Gemini, and score extraction/verification")
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--model", default="gemini-2.0-flash")

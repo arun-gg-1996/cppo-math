@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Checkpoint evaluation helpers (vLLM generation + pass@k reporting)."""
+
 import json
 import logging
 import shutil
@@ -106,6 +108,7 @@ def combine_eval_profile_summaries(
 
 
 def _has_model_weights(path: Path) -> bool:
+    """Return True when a directory contains full model weights."""
     if not path.exists() or not path.is_dir():
         return False
     fixed = {
@@ -125,6 +128,7 @@ def _has_model_weights(path: Path) -> bool:
 
 
 def _is_adapter_only_checkpoint(path: Path) -> bool:
+    """Detect LoRA adapter-only checkpoint directories."""
     has_adapter = (path / "adapter_model.safetensors").exists() or (path / "adapter_model.bin").exists()
     return (
         path.exists()
@@ -136,6 +140,7 @@ def _is_adapter_only_checkpoint(path: Path) -> bool:
 
 
 def _copy_if_exists(src: Path, dst: Path, filename: str) -> None:
+    """Copy `filename` from src to dst if present and not already copied."""
     s = src / filename
     d = dst / filename
     if s.exists() and not d.exists():
@@ -143,6 +148,10 @@ def _copy_if_exists(src: Path, dst: Path, filename: str) -> None:
 
 
 def _resolve_eval_model_path(ckpt: str, hf_token: str) -> str:
+    """Resolve model path for eval.
+
+    If `ckpt` is adapter-only, merge adapter + base once and cache the merged path.
+    """
     ckpt_path = Path(ckpt)
     if not ckpt_path.exists() or not ckpt_path.is_dir():
         return ckpt
@@ -249,6 +258,7 @@ def cleanup_merged_eval_model(ckpt: str) -> None:
 
 
 def _read_jsonl(path: str) -> list[dict[str, Any]]:
+    """Read a JSONL file into memory."""
     rows: list[dict[str, Any]] = []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -259,6 +269,7 @@ def _read_jsonl(path: str) -> list[dict[str, Any]]:
 
 
 def _render_prompt(tokenizer: AutoTokenizer, system_prompt: str, question: str) -> str:
+    """Render prompt text with tokenizer chat template fallback."""
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": question},
@@ -270,6 +281,7 @@ def _render_prompt(tokenizer: AutoTokenizer, system_prompt: str, question: str) 
 
 
 def _pass_at_k(n: int, c: int, k: int) -> float:
+    """Unbiased pass@k estimator used by common code/math benchmarks."""
     if c == 0:
         return 0.0
     if n - c < k:
@@ -279,6 +291,7 @@ def _pass_at_k(n: int, c: int, k: int) -> float:
 
 
 def _is_truncated_generation(item: Any, max_new_tokens: int) -> bool:
+    """Heuristic to detect length-truncated generations."""
     finish_reason = str(getattr(item, "finish_reason", "") or "").strip().lower()
     stop_reason = str(getattr(item, "stop_reason", "") or "").strip().lower()
     token_ids = getattr(item, "token_ids", None)
@@ -316,6 +329,7 @@ def evaluate_checkpoint(
     truncation_retry_max_retries: int = 0,
     truncation_retry_max_new_tokens: int | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Evaluate one checkpoint on one split and return summary + per-problem details."""
     from vllm import LLM, SamplingParams
 
     eval_model = _resolve_eval_model_path(ckpt, hf_token)
@@ -459,6 +473,7 @@ def evaluate_checkpoint(
 
 
 def save_eval_outputs(summary: dict[str, Any], details: list[dict[str, Any]], out_dir: Path) -> None:
+    """Persist eval summary and detailed rows to disk."""
     out_dir.mkdir(parents=True, exist_ok=True)
     with (out_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)

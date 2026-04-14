@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""YAML config loader with inheritance, overrides, and safety validation."""
+
 import copy
 import os
 from datetime import datetime
@@ -11,6 +13,7 @@ from dotenv import load_dotenv
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge two dicts without mutating inputs."""
     out = copy.deepcopy(base)
     for key, value in override.items():
         if key in out and isinstance(out[key], dict) and isinstance(value, dict):
@@ -21,6 +24,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
+    """Read and validate a top-level YAML mapping."""
     with path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
@@ -29,6 +33,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def _resolve_extends(path: Path) -> dict[str, Any]:
+    """Resolve `extends:` chain and return merged config."""
     cfg = _read_yaml(path)
     extends = cfg.pop("extends", None)
     if not extends:
@@ -40,6 +45,7 @@ def _resolve_extends(path: Path) -> dict[str, Any]:
 
 
 def _set_by_dotted_key(cfg: dict[str, Any], dotted_key: str, raw_value: str) -> None:
+    """Apply CLI override of the form `a.b.c=value` into nested config dict."""
     parts = dotted_key.split(".")
     cur: dict[str, Any] = cfg
     for part in parts[:-1]:
@@ -72,6 +78,7 @@ def _infer_project_root(config_path: Path) -> Path:
 
 
 def _resolve_path(base_dir: Path, value: str | Path) -> str:
+    """Resolve path relative to `base_dir` and return absolute string path."""
     p = Path(value)
     if p.is_absolute():
         return str(p)
@@ -79,6 +86,7 @@ def _resolve_path(base_dir: Path, value: str | Path) -> str:
 
 
 def _resolve_config_paths(cfg: dict[str, Any], config_path: Path, project_root: Path) -> None:
+    """Resolve all known path fields to absolute paths."""
     cfg.setdefault("paths", {})
     cfg["paths"]["project_root"] = str(project_root)
 
@@ -101,6 +109,7 @@ def _resolve_config_paths(cfg: dict[str, Any], config_path: Path, project_root: 
 
 
 def _require(cfg: dict[str, Any], key: str) -> Any:
+    """Fetch required dotted config key or raise a readable error."""
     parts = key.split(".")
     cur: Any = cfg
     for part in parts:
@@ -111,6 +120,7 @@ def _require(cfg: dict[str, Any], key: str) -> Any:
 
 
 def _validate_cppo(cfg: dict[str, Any]) -> None:
+    """Validate CPPO-specific knobs and integer keep-count constraint."""
     mode = _require(cfg, "rollout.mode")
     group_size = int(_require(cfg, "rollout.num_generations"))
     if group_size < 2:
@@ -146,6 +156,7 @@ def _validate_cppo(cfg: dict[str, Any]) -> None:
 
 
 def _validate_generation_math(cfg: dict[str, Any]) -> None:
+    """Validate batch/generation arithmetic expected by TRL GRPO trainer."""
     batch_size = int(_require(cfg, "training.batch_size"))
     world_size = int(_require(cfg, "training.world_size"))
     grad_acc = int(_require(cfg, "training.gradient_accumulation_steps"))
@@ -174,6 +185,7 @@ def _validate_generation_math(cfg: dict[str, Any]) -> None:
 
 
 def _validate_env(cfg: dict[str, Any], project_root: Path) -> dict[str, str]:
+    """Validate required env vars and optionally load `.env` file."""
     env_cfg = cfg.get("env", {})
     dotenv_required = bool(env_cfg.get("require_dotenv_file", False))
     dotenv_path = Path(str(env_cfg.get("dotenv_path", project_root / ".env")))
@@ -216,6 +228,7 @@ def _validate_env(cfg: dict[str, Any], project_root: Path) -> dict[str, str]:
 
 
 def load_config(config_path: str, overrides: list[str] | None = None) -> dict[str, Any]:
+    """Load, merge, resolve, and validate the full runtime config."""
     path = Path(config_path).resolve()
     project_root = _infer_project_root(path)
 
@@ -264,6 +277,7 @@ def load_config(config_path: str, overrides: list[str] | None = None) -> dict[st
 
 
 def dump_resolved_config(cfg: dict[str, Any], path: Path) -> None:
+    """Write resolved runtime config snapshot to YAML."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False)

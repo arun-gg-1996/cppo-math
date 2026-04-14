@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+"""Main training entrypoint for CPPO/GRPO runs.
+
+This file wires together:
+- config loading/validation
+- dataset shaping
+- reward function and observability metrics
+- trainer selection (GRPO vs CPPO)
+- checkpoint/boundary evaluation hooks
+"""
+
 import argparse
 import json
 import logging
@@ -61,6 +71,7 @@ RUN_REWARD_EVALUATOR = EvaluatorRegistry({"default_backend": "fallback_sympy"})
 
 
 def _label_key(raw: Any) -> str:
+    """Normalize metric labels to safe lowercase keys."""
     s = str(raw or "unknown").strip().lower()
     out = []
     for ch in s:
@@ -73,6 +84,7 @@ def _label_key(raw: Any) -> str:
 
 
 def _get_list(values: Any, n: int, default: str) -> list[str]:
+    """Return a length-`n` string list from scalar/list-like input."""
     if values is None:
         return [default] * n
     if isinstance(values, (list, tuple)):
@@ -84,6 +96,7 @@ def _get_list(values: Any, n: int, default: str) -> list[str]:
 
 
 def _build_ref_lines(cfg: dict[str, Any]) -> dict[str, float]:
+    """Build static W&B reference lines from config overrides."""
     refs = cfg.get("observability", {}).get("refs", {})
     out = dict(RUN_REF_LINES)
     for key in out:
@@ -93,6 +106,7 @@ def _build_ref_lines(cfg: dict[str, Any]) -> dict[str, float]:
 
 
 def set_seed(seed: int) -> None:
+    """Set Python/NumPy/Torch seeds for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -101,6 +115,7 @@ def set_seed(seed: int) -> None:
 
 
 def _read_jsonl(path: str) -> list[dict[str, Any]]:
+    """Read a JSONL file into a list of dict rows."""
     rows: list[dict[str, Any]] = []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -111,6 +126,7 @@ def _read_jsonl(path: str) -> list[dict[str, Any]]:
 
 
 def _validate_train_rows(rows: list[dict[str, Any]]) -> None:
+    """Sanity-check a sample of training rows for required fields."""
     required = {"question", "answer", "source", "difficulty"}
     for i, row in enumerate(rows[:20]):
         missing = [k for k in required if k not in row or row[k] in (None, "")]
@@ -119,6 +135,7 @@ def _validate_train_rows(rows: list[dict[str, Any]]) -> None:
 
 
 def _build_train_dataset(rows: list[dict[str, Any]], system_prompt: str) -> Dataset:
+    """Convert normalized JSON rows into TRL-compatible chat prompts."""
     dataset_rows: list[dict[str, Any]] = []
     for i, row in enumerate(rows):
         question = str(row["question"]).strip()
@@ -139,6 +156,10 @@ def _build_train_dataset(rows: list[dict[str, Any]], system_prompt: str) -> Data
 
 
 def _reward_fn(completions: list[Any], answer: list[str], **kwargs: Any) -> list[float]:
+    """Compute blended reward and update rolling observability metrics.
+
+    Reward = weighted accuracy + weighted format score, clamped to [0, 1].
+    """
     global PROCESSED_TOTAL
     if isinstance(answer, str):
         answers = [answer] * len(completions)
@@ -258,6 +279,8 @@ def _reward_fn(completions: list[Any], answer: list[str], **kwargs: Any) -> list
 
 
 class RewardStatsCallback(TrainerCallback):
+    """Aggregate reward diagnostics and forward them to trainer/W&B logs."""
+
     def on_log(self, args, state, control, logs=None, **kwargs):
         if not state.is_world_process_zero:
             return control
@@ -290,6 +313,8 @@ class RewardStatsCallback(TrainerCallback):
 
 
 class MidEvalCallback(TrainerCallback):
+    """Optional quick local mid-step eval callback (debug-oriented)."""
+
     def __init__(
         self,
         tokenizer: AutoTokenizer,
@@ -310,6 +335,7 @@ class MidEvalCallback(TrainerCallback):
         self.skip_steps = set(skip_steps or set())
 
     def _render_prompt(self, question: str) -> str:
+        """Render a single eval prompt using chat template if available."""
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": question},
@@ -320,6 +346,7 @@ class MidEvalCallback(TrainerCallback):
             return f"{self.system_prompt}\n\n{question}"
 
     def _run_quick_eval(self, model: torch.nn.Module, n_problems: int) -> float:
+        """Run small pass@1 snapshot without vLLM (local debug path)."""
         if not self.eval_rows:
             return 0.0
 
@@ -358,6 +385,7 @@ class MidEvalCallback(TrainerCallback):
         return float(correct) / float(len(subset))
 
     def on_step_end(self, args, state, control, **kwargs):
+        """Trigger quick local eval on configured steps."""
         if not state.is_world_process_zero:
             return control
 
@@ -386,6 +414,7 @@ class MidEvalCallback(TrainerCallback):
 
 
 def _build_grpo_config(cfg: dict[str, Any], run_dir: Path) -> GRPOConfig:
+    """Translate project YAML into GRPOConfig for this TRL version."""
     fields = GRPOConfig.__dataclass_fields__.keys()
 
     train_cfg = cfg["training"]
@@ -477,6 +506,7 @@ def _build_grpo_config(cfg: dict[str, Any], run_dir: Path) -> GRPOConfig:
 
 
 def _write_run_manifest(cfg: dict[str, Any], run_dir: Path, config_path: str, overrides: list[str]) -> None:
+    """Write run metadata for reproducibility/debugging."""
     manifest = {
         "run_id": cfg["run"]["id"],
         "created_at": datetime.utcnow().isoformat() + "Z",
@@ -501,6 +531,7 @@ def _run_boundary_eval_stage(
     run_dir: Path,
     step: int | None = None,
 ) -> None:
+    """Run start/end boundary evaluation suite and persist per-split artifacts."""
     eval_cfg = cfg.get("eval", {})
     boundary_cfg = eval_cfg.get("boundary_eval", {})
     if not bool(boundary_cfg.get("enabled", True)):
@@ -598,6 +629,7 @@ def _run_boundary_eval_stage(
 
 
 def main(config_path: str, overrides: list[str]) -> None:
+    """Execute a full training run from a YAML config."""
     cfg = load_config(config_path, overrides=overrides)
     global RUN_REF_LINES
     global RUN_REWARD_ACCURACY_WEIGHT
@@ -781,6 +813,7 @@ def main(config_path: str, overrides: list[str]) -> None:
 
 
 def cli() -> None:
+    """CLI wrapper for `main`."""
     parser = argparse.ArgumentParser(description="CPPO/GRPO training entrypoint (YAML-configured)")
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument(

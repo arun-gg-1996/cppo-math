@@ -25,6 +25,7 @@ _FORMAT_PATTERN = re.compile(r"^\s*<think>.*?</think>\s*<answer>.*?</answer>\s*$
 
 
 def unwrap_completion(completion: Any) -> str:
+    """Normalize TRL/vLLM completion payloads to a plain assistant string."""
     if isinstance(completion, str):
         return completion
     if isinstance(completion, list):
@@ -68,6 +69,7 @@ def extract_boxed(text: str) -> str | None:
 
 
 def extract_answer_tag(text: str) -> str | None:
+    """Extract text from the final `<answer>...</answer>` block."""
     if not text:
         return None
     parts = text.split("<answer>")
@@ -96,6 +98,7 @@ def check_format_compliance(predicted_text: str) -> float:
 
 
 def extract_code_fence(text: str) -> str | None:
+    """Extract final fenced code block body (language tag optional)."""
     if not text:
         return None
     matches = re.findall(r"```(?:[A-Za-z0-9_+-]*)?\n?(.*?)```", text, flags=re.DOTALL)
@@ -106,6 +109,7 @@ def extract_code_fence(text: str) -> str | None:
 
 
 def extract_final_answer_line(text: str) -> str | None:
+    """Extract loose `final answer is ...` style fallback."""
     if not text:
         return None
     patterns = [
@@ -123,6 +127,7 @@ def extract_final_answer_line(text: str) -> str | None:
 
 
 def _clean_candidate_text(s: str) -> str:
+    """Trim wrappers/markdown noise from extracted answer text."""
     s = s.strip()
     s = s.strip("`")
     s = re.sub(r"^(\*\*|__)+|(\*\*|__)+$", "", s)
@@ -131,6 +136,7 @@ def _clean_candidate_text(s: str) -> str:
 
 
 def _strip_tex_wrappers(s: str) -> str:
+    """Normalize common LaTeX wrappers into parser-friendly text."""
     s = s.strip()
     s = re.sub(r"^\$+|\$+$", "", s)
     s = s.replace("\\left", "").replace("\\right", "")
@@ -142,6 +148,7 @@ def _strip_tex_wrappers(s: str) -> str:
 
 
 def _replace_frac(s: str) -> str:
+    """Convert simple `\\frac{a}{b}` patterns to `(a)/(b)`."""
     pattern = re.compile(r"\\frac\{([^{}]+)\}\{([^{}]+)\}")
     prev = None
     cur = s
@@ -152,6 +159,7 @@ def _replace_frac(s: str) -> str:
 
 
 def _normalize_expr_string(s: str) -> str:
+    """Apply text-level normalization before symbolic parsing."""
     s = _strip_tex_wrappers(s)
     s = _replace_frac(s)
     s = s.replace("{", "(").replace("}", ")")
@@ -160,6 +168,7 @@ def _normalize_expr_string(s: str) -> str:
 
 
 def _try_decimal_or_fraction(s: str) -> sp.Expr | None:
+    """Fast path parser for plain numeric forms."""
     s = s.strip()
     if not s:
         return None
@@ -175,6 +184,7 @@ def _try_decimal_or_fraction(s: str) -> sp.Expr | None:
 
 
 def _parse_to_expr(s: str) -> sp.Expr | None:
+    """Safely parse candidate math text into a SymPy expression."""
     direct = _try_decimal_or_fraction(s)
     if direct is not None:
         return direct
@@ -210,6 +220,7 @@ def _parse_to_expr(s: str) -> sp.Expr | None:
 
 
 def _extract_single_number_value(s: str) -> float | None:
+    """Extract one numeric literal from a string, else return None."""
     if not s:
         return None
     txt = s.replace(",", "")
@@ -223,6 +234,7 @@ def _extract_single_number_value(s: str) -> float | None:
 
 
 def _split_top_level_commas(s: str) -> list[str]:
+    """Split comma-separated tuple parts while respecting bracket nesting."""
     parts: list[str] = []
     cur: list[str] = []
     depth = 0
@@ -245,6 +257,7 @@ def _split_top_level_commas(s: str) -> list[str]:
 
 
 def _tuple_parts(s: str) -> list[str] | None:
+    """Return tuple/list components for `(a,b,...)` or `[a,b,...]` answers."""
     if not s:
         return None
     raw = _strip_tex_wrappers(s)
@@ -262,6 +275,7 @@ def _tuple_parts(s: str) -> list[str] | None:
 
 
 def equivalent_math(pred: str, gt: str) -> bool:
+    """Check symbolic/numeric equivalence between predicted and target answers."""
     if not pred or not gt:
         return False
 
@@ -309,6 +323,7 @@ def equivalent_math(pred: str, gt: str) -> bool:
 
 
 def extract_prediction_answer(predicted_text: str) -> str | None:
+    """Extract best candidate answer from model output using ordered fallbacks."""
     if not predicted_text:
         return None
 
@@ -326,6 +341,7 @@ def extract_prediction_answer(predicted_text: str) -> str | None:
 
 
 def _ground_truth_candidates(ground_truth: str) -> list[str]:
+    """Expand ground truth into normalized candidate set for matching."""
     gt = (ground_truth or "").strip()
     if not gt:
         return []
@@ -369,6 +385,7 @@ def check_answer(predicted_text: str, ground_truth: str) -> float:
 
 
 def score_batch(completions: list[Any], answers: list[str]) -> list[float]:
+    """Batch helper for reward evaluation."""
     if len(completions) != len(answers):
         n = min(len(completions), len(answers))
         completions = completions[:n]

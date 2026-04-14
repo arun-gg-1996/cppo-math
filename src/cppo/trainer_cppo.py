@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""CPPO trainer implementation on top of TRL's GRPOTrainer.
+
+This module keeps two CPPO modes:
+- `author_exact`: behavior aligned with the public CPPO implementation.
+- `experimental_refill`: a custom mode that preserves fixed kept slots per step.
+"""
+
 import copy
 import math
 import random
@@ -15,7 +22,7 @@ CPPO_STRATEGY_EXPERIMENTAL_REFILL = "experimental_refill"
 
 
 def select_cppo_keep_indices(abs_advantages: torch.Tensor, keep_count: int, metric: str) -> list[int]:
-    """Select indices to keep according to CPPO pruning metric."""
+    """Select completion indices to keep after ranking by absolute advantage."""
     if keep_count <= 0:
         return []
     if keep_count >= abs_advantages.numel():
@@ -47,6 +54,14 @@ class CPPOTrainer(GRPOTrainer):
         cppo_strategy: str = CPPO_STRATEGY_AUTHOR_EXACT,
         **kwargs,
     ):
+        """Initialize CPPO knobs and derive keep/presample values.
+
+        Args:
+            cppo_pruning: Fraction to prune from generated completions.
+            cppo_metric: `smallest` (canonical) or `largest`.
+            cppo_allocation: Enable dynamic allocation behavior.
+            cppo_strategy: `author_exact` or `experimental_refill`.
+        """
         super().__init__(*args, **kwargs)
         if not (0.0 <= float(cppo_pruning) < 1.0):
             raise ValueError(f"cppo_pruning must be in [0,1), got {cppo_pruning}")
@@ -84,7 +99,7 @@ class CPPOTrainer(GRPOTrainer):
                 self.args.num_generations = self.num_generations
 
     def _compute_advantages(self, rewards_per_func: torch.Tensor, num_generations: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute weighted rewards and advantages, mirroring GRPOTrainer logic."""
+        """Compute weighted rewards/advantages using the same math as GRPOTrainer."""
         device = self.accelerator.device
         if self.multi_objective_aggregation == "sum_then_normalize":
             rewards = (rewards_per_func * self.reward_weights.to(device).unsqueeze(0)).nansum(dim=1)
@@ -124,7 +139,11 @@ class CPPOTrainer(GRPOTrainer):
         advantage_group_size: int,
         prune_style: str,
     ) -> dict[str, Any]:
-        """Generate, score, compute full-group advantages, then prune."""
+        """Run one CPPO generation-scoring round and return only kept completions.
+
+        Important: advantages are always computed on the full group first, then pruning
+        decides which completions continue to loss computation.
+        """
         if prune_style not in {"global", "per_group"}:
             raise ValueError(f"Unknown prune_style={prune_style}")
 
@@ -241,6 +260,11 @@ class CPPOTrainer(GRPOTrainer):
     def _generate_and_score_completions(
         self, inputs: list[dict[str, torch.Tensor | Any]]
     ) -> dict[str, torch.Tensor | Any]:
+        """Override GRPO generation path to inject CPPO pruning/allocation.
+
+        The eval path is intentionally untouched to keep evaluation behavior consistent
+        with base GRPOTrainer.
+        """
         # Keep eval path unchanged.
         if not self.model.training:
             return super()._generate_and_score_completions(inputs)
@@ -316,6 +340,10 @@ class CPPOTrainer(GRPOTrainer):
                 _extend_round(round_out)
                 target_kept = len(all_kept_advantages)
         else:
+            # Experimental refill strategy:
+            # 1) prune per original group
+            # 2) if allocation is enabled, keep sampling additional groups until the
+            #    target kept budget is filled (or safety cap is hit).
             first_round = self._run_cppo_round(
                 inputs,
                 advantage_group_size=self.cppo_original_num_generations,

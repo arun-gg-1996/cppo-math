@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Validate extraction/checking robustness on local eval datasets."""
+
 import argparse
 import json
 import re
@@ -29,6 +31,7 @@ EVAL_FILES = {
 
 
 def _read_jsonl(path: Path) -> list[dict]:
+    """Read JSONL rows from disk."""
     rows: list[dict] = []
     with path.open("r", encoding="utf-8") as f:
         for line in f:
@@ -39,11 +42,13 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _is_none_answer(gt: str) -> bool:
+    """Detect standardized 'no answer' labels."""
     s = (gt or "").strip().lower()
     return s in {"none", "no answer", "cannot be determined"}
 
 
 def validate_split(name: str, rows: list[dict], limit: int = 0) -> dict:
+    """Run deterministic extractor/checker probes for one split."""
     if limit > 0:
         rows = rows[:limit]
     n = len(rows)
@@ -85,6 +90,7 @@ def validate_split(name: str, rows: list[dict], limit: int = 0) -> dict:
 
 
 def main() -> None:
+    """CLI entrypoint for evaluator robustness validation."""
     ap = argparse.ArgumentParser(description="Validate extractor/evaluator robustness on local eval files")
     ap.add_argument("--limit", type=int, default=0, help="Optional row cap per split")
     ap.add_argument(
@@ -141,4 +147,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

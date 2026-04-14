@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Compatibility launcher that delegates to project-root `smoke_test.py`."""
+
 import runpy
 from pathlib import Path
 

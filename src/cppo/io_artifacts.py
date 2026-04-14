@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""I/O helpers for checkpoint artifacts, symlinks, and retention pruning."""
+
 import json
 import os
 import shutil
@@ -9,16 +11,19 @@ from typing import Any
 
 
 def ensure_dir(path: Path) -> None:
+    """Create directory tree if missing."""
     path.mkdir(parents=True, exist_ok=True)
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Write JSON with utf-8 + pretty indentation."""
     ensure_dir(path.parent)
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
 def read_json(path: Path, default: Any) -> Any:
+    """Read JSON or return `default` when file does not exist."""
     if not path.exists():
         return default
     with path.open("r", encoding="utf-8") as f:
@@ -26,6 +31,7 @@ def read_json(path: Path, default: Any) -> Any:
 
 
 def copy_resolved_config_to_checkpoint(resolved_config_path: Path, checkpoint_dir: Path) -> None:
+    """Copy resolved config snapshot into checkpoint folder."""
     ensure_dir(checkpoint_dir)
     shutil.copy2(resolved_config_path, checkpoint_dir / "config.yaml")
 
@@ -38,6 +44,7 @@ def write_checkpoint_meta(
     save_reason: str,
     primary_metric: float | None,
 ) -> None:
+    """Write metadata describing why/when a checkpoint was saved."""
     payload = {
         "run_id": run_id,
         "global_step": int(global_step),
@@ -49,6 +56,7 @@ def write_checkpoint_meta(
 
 
 def _safe_symlink(target: Path, link_path: Path) -> None:
+    """Create relative symlink with filesystem-safe fallback copy."""
     try:
         if link_path.is_symlink() or link_path.exists():
             link_path.unlink()
@@ -64,24 +72,29 @@ def _safe_symlink(target: Path, link_path: Path) -> None:
 
 
 def update_latest_symlink(checkpoints_root: Path, checkpoint_dir: Path) -> None:
+    """Refresh `latest` pointer to newest checkpoint."""
     _safe_symlink(checkpoint_dir, checkpoints_root / "latest")
 
 
 def update_best_symlink(checkpoints_root: Path, best_checkpoint_dir: Path | None) -> None:
+    """Refresh `best` pointer if a best checkpoint exists."""
     if best_checkpoint_dir is None:
         return
     _safe_symlink(best_checkpoint_dir, checkpoints_root / "best")
 
 
 def load_checkpoint_index(index_path: Path) -> list[dict[str, Any]]:
+    """Back-compat helper; reads index payload."""
     return read_json(index_path, default=[])
 
 
 def save_checkpoint_index(index_path: Path, rows: list[dict[str, Any]]) -> None:
+    """Write checkpoint index in canonical `{'checkpoints': rows}` shape."""
     write_json(index_path, {"checkpoints": rows})
 
 
 def load_checkpoint_rows(index_path: Path) -> list[dict[str, Any]]:
+    """Load checkpoint row list from index file."""
     blob = read_json(index_path, default={"checkpoints": []})
     if isinstance(blob, dict):
         rows = blob.get("checkpoints", [])
@@ -91,6 +104,7 @@ def load_checkpoint_rows(index_path: Path) -> list[dict[str, Any]]:
 
 
 def append_checkpoint_row(index_path: Path, row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Upsert a checkpoint row by step and return sorted rows."""
     rows = load_checkpoint_rows(index_path)
     rows = [r for r in rows if int(r.get("global_step", -1)) != int(row.get("global_step", -2))]
     rows.append(row)
@@ -100,6 +114,7 @@ def append_checkpoint_row(index_path: Path, row: dict[str, Any]) -> list[dict[st
 
 
 def select_best_checkpoint(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Select best checkpoint by primary metric (or latest if missing metric)."""
     if not rows:
         return None
 
@@ -112,6 +127,7 @@ def select_best_checkpoint(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _remove_tree(path: Path) -> None:
+    """Delete file/symlink/directory path safely."""
     if path.is_symlink() or path.is_file():
         path.unlink(missing_ok=True)
         return
@@ -127,6 +143,7 @@ def prune_checkpoints(
     keep_last_n: int,
     apply: bool,
 ) -> dict[str, list[str]]:
+    """Compute and optionally apply checkpoint retention policy."""
     rows_sorted = sorted(rows, key=lambda x: int(x.get("global_step", 0)))
 
     best_sorted = sorted(

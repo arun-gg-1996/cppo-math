@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Launch TRL-managed vLLM server using project YAML configuration."""
+
 import argparse
 import shlex
 import subprocess
@@ -15,6 +17,7 @@ from cppo.config_loader import load_config  # noqa: E402
 
 
 def _build_command(cfg: dict) -> list[str]:
+    """Build `trl vllm-serve` command from rollout/model config."""
     rollout_cfg = cfg.get("rollout", {})
     model_cfg = cfg.get("model", {})
 
@@ -61,6 +64,7 @@ def _build_command(cfg: dict) -> list[str]:
 
 
 def main() -> None:
+    """CLI wrapper to print/launch vLLM server command."""
     parser = argparse.ArgumentParser(description="Launch TRL vLLM server from YAML config (split GPU mode).")
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument(

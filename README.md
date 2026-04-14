@@ -2,6 +2,13 @@
 
 YAML-first CPPO/GRPO training with reproducible checkpoint artifacts.
 
+## Start Here
+
+- High-level code walkthrough: `docs/CODE_OVERVIEW.md`
+- Run folder artifacts: `docs/RUN_LAYOUT.md`
+- Training metrics dictionary: `docs/TRAIN_METRICS.md`
+- Pruning notes/risks: `docs/PRUNING_NOTES.md`
+
 ## Script Guide (Simple)
 
 - `scripts/train.py`: starts training from a YAML config.
@@ -46,24 +53,24 @@ YAML-first CPPO/GRPO training with reproducible checkpoint artifacts.
 
 ```bash
 cd <repo_root>
-python3.10 -m venv .venv
+bash setup_env.sh
 source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-cp -n .env.example .env
 ```
 
-If your machine uses `python3` instead of `python3.10`, use:
-
-```bash
-python3 -m venv .venv
-```
+`setup_env.sh` does the full setup flow:
+- creates/updates `.venv`
+- installs `requirements.txt`
+- prompts for required `WANDB_API_KEY` and `HF_TOKEN` (hidden input)
+- writes/updates those keys in `.env` while preserving unrelated keys
+- runs `wandb login` and `hf auth login`
 
 `.env` is required by default. Training fails fast if:
 - `.env` is missing, or
 - `integrations.wandb.enabled=true` but W&B token env var is missing, or
 - `integrations.hf_hub.enabled=true` (or `push_to_hub=true`) but HF token env var is missing.
 - `push_to_hub=true` but `integrations.hf_hub.hub_model_id` is empty.
+
+`.env.example` is kept as a reference template; setup does not require copying it.
 
 Default integration profile:
 - W&B enabled

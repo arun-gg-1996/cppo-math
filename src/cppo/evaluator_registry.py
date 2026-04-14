@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Source-aware evaluator router for training and evaluation phases."""
+
 import importlib
 import logging
 import re
@@ -31,6 +33,7 @@ class EvalScore:
 
 
 def _to_backend_map(raw: Any) -> dict[str, str]:
+    """Normalize split->backend config mapping."""
     if not isinstance(raw, dict):
         return {}
     out: dict[str, str] = {}
@@ -43,11 +46,13 @@ def _to_backend_map(raw: Any) -> dict[str, str]:
 
 
 def _is_none_like(text: str) -> bool:
+    """Return True for common 'no answer' textual variants."""
     t = (text or "").strip().lower()
     return t in {"none", "no answer", "cannot be determined", "not enough information"}
 
 
 def _ground_truth_candidates(gt: str) -> list[str]:
+    """Expand ground truth variants (for example `a or b`)."""
     g = (gt or "").strip()
     if not g:
         return []
@@ -103,6 +108,7 @@ class EvaluatorRegistry:
         ground_truth: str,
         row: dict[str, Any] | None = None,
     ) -> EvalScore:
+        """Route one prediction to the configured backend and return score metadata."""
         split = str(split_name or "").strip()
         forced = self.backend_by_split.get(split, self.default_backend).strip().lower()
         if forced == "auto":
@@ -123,6 +129,7 @@ class EvaluatorRegistry:
         ground_truth: str,
         row: dict[str, Any] | None = None,
     ) -> EvalScore:
+        """Auto-routing policy: custom -> math-verify -> local fallback."""
         if split_name in self.custom_by_split:
             return self._score_with_backend(
                 backend="custom",
@@ -158,6 +165,7 @@ class EvaluatorRegistry:
         ground_truth: str,
         row: dict[str, Any] | None = None,
     ) -> EvalScore:
+        """Score one prediction using a specific backend with robust fallback."""
         b = backend.strip().lower()
         if b in {"fallback", "fallback_sympy", "sympy", "local"}:
             s = check_answer(predicted_text, ground_truth)
@@ -190,6 +198,7 @@ class EvaluatorRegistry:
         return EvalScore(score=float(s), backend="fallback_sympy", note=f"unknown_backend:{b}")
 
     def _load_custom_callable(self, split_name: str):
+        """Load and cache custom evaluator callable for a split."""
         spec = self.custom_by_split.get(split_name, "")
         if not spec:
             return None
@@ -217,6 +226,7 @@ class EvaluatorRegistry:
             return None
 
     def _ensure_math_verify(self) -> None:
+        """Lazy-import math_verify and cache availability flags."""
         if self._mv_checked:
             return
         self._mv_checked = True
@@ -228,6 +238,7 @@ class EvaluatorRegistry:
             self._mv_available = False
 
     def _mv_parse(self, text: str):
+        """Version-tolerant wrapper around `math_verify.parse`."""
         assert self._mv_mod is not None
         parse_fn = getattr(self._mv_mod, "parse", None)
         if not callable(parse_fn):
@@ -253,6 +264,7 @@ class EvaluatorRegistry:
             raise
 
     def _mv_verify_pair(self, a, b) -> bool:
+        """Version-tolerant wrapper around `math_verify.verify`."""
         assert self._mv_mod is not None
         verify_fn = getattr(self._mv_mod, "verify", None)
         if not callable(verify_fn):
@@ -267,6 +279,7 @@ class EvaluatorRegistry:
         return bool(out)
 
     def _score_math_verify(self, *, predicted_text: str, ground_truth: str) -> EvalScore | None:
+        """Score using math-verify backend; return None when backend unavailable."""
         self._ensure_math_verify()
         if not self._mv_available:
             if not self._warned_missing_mv:

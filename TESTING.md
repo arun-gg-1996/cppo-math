@@ -10,22 +10,15 @@ This is the strict checklist for:
 What this does:
 - creates and activates your virtual environment
 - installs dependencies
-- creates `.env` if missing
+- prompts for required tokens and writes `.env`
 
 ```bash
 cd <repo_root>
-python3.10 -m venv .venv
+bash setup_env.sh
 source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-cp -n .env.example .env
 ```
 
-If your machine uses `python3` instead of `python3.10`, use:
-
-```bash
-python3 -m venv .venv
-```
+`setup_env.sh` prompts for `WANDB_API_KEY` and `HF_TOKEN` (hidden input), updates `.env`, and runs `wandb login` + `hf auth login`.
 
 ## 1) Local Mac (no GPU) - rigorous pass
 

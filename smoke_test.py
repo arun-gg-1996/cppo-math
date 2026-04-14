@@ -32,12 +32,14 @@ LOCAL_SMOKE_MODEL = "sshleifer/tiny-gpt2"
 
 
 def cppo_keep_count(group_size: int, pruning: float) -> int:
+    """Compute integer kept completions for group-size/pruning pair."""
     keep_float = float(group_size) * (1.0 - float(pruning))
     keep = int(round(keep_float))
     return keep
 
 
 def test_reward_unit_cases() -> None:
+    """Sanity-check core reward extraction/equivalence cases."""
     gt = "1/2"
     exact = "<think>...</think>\\n\\boxed{1/2}"
     equiv = "<think>...</think>\\n\\boxed{0.5}"
@@ -56,6 +58,7 @@ def test_reward_unit_cases() -> None:
 
 
 def test_evaluator_registry_fallback_backend() -> None:
+    """Ensure evaluator registry fallback backend returns expected score/backend."""
     ev = EvaluatorRegistry({"default_backend": "fallback_sympy"})
     r = ev.score(
         split_name="math_500",
@@ -68,6 +71,7 @@ def test_evaluator_registry_fallback_backend() -> None:
 
 
 def test_reward_metrics_track_unique_and_per_source() -> None:
+    """Ensure reward path emits cumulative source/problem counters."""
     train_mod.REWARD_STATS_BUFFER.clear()
     train_mod.SEEN_PROBLEM_IDS.clear()
     train_mod.SEEN_BY_SOURCE.clear()
@@ -97,6 +101,7 @@ def test_reward_metrics_track_unique_and_per_source() -> None:
 
 
 def test_cppo_pruning_keeps_top_abs_adv_not_top_reward() -> None:
+    """Validate CPPO selection is by |advantage|, not raw reward."""
     rewards = [1.0, 1.0, 0.0, 1.0]
     advantages = torch.tensor([0.15, 0.05, -0.90, 0.60], dtype=torch.float32)
     kept = select_cppo_keep_indices(advantages.abs(), keep_count=2, metric="smallest")
@@ -105,6 +110,7 @@ def test_cppo_pruning_keeps_top_abs_adv_not_top_reward() -> None:
 
 
 def test_cppo_metric_smallest_vs_largest() -> None:
+    """Validate metric switch flips kept-index ordering behavior."""
     advantages = torch.tensor([0.10, -0.80, 0.20, 0.70], dtype=torch.float32)
     keep_smallest = select_cppo_keep_indices(advantages.abs(), keep_count=2, metric="smallest")
     keep_largest = select_cppo_keep_indices(advantages.abs(), keep_count=2, metric="largest")
@@ -113,11 +119,13 @@ def test_cppo_metric_smallest_vs_largest() -> None:
 
 
 def test_cppo_keep_count_g16() -> None:
+    """Validate paper-aligned keep counts for common G=16 pruning ratios."""
     assert cppo_keep_count(16, 0.875) == 2
     assert cppo_keep_count(16, 0.9375) == 1
 
 
 def test_cppo_allocation_budget_math_author_exact() -> None:
+    """Validate author-exact allocation math on a toy example."""
     group_size = 16
     pruning = 0.875
     keep_per_group = cppo_keep_count(group_size, pruning)
@@ -135,6 +143,7 @@ def test_cppo_allocation_budget_math_author_exact() -> None:
 
 
 def test_cppo_allocation_budget_math_experimental_refill() -> None:
+    """Validate refill strategy kept-budget arithmetic."""
     group_size = 16
     pruning = 0.875
     keep_per_group = cppo_keep_count(group_size, pruning)
@@ -151,6 +160,7 @@ def test_cppo_allocation_budget_math_experimental_refill() -> None:
 
 
 def _tiny_dataset() -> Dataset:
+    """Small deterministic dataset for fast trainer smoke checks."""
     rows = [
         {
             "prompt": "Solve and return \\boxed{1/2} only.",
@@ -185,10 +195,12 @@ def _tiny_dataset() -> Dataset:
 
 
 def _reward_fn(completions, answer, **kwargs):
+    """Minimal reward function for smoke training."""
     return score_batch(completions, answer)
 
 
 def _build_args(**overrides: Any) -> GRPOConfig:
+    """Build tiny GRPOConfig with override support."""
     fields = GRPOConfig.__dataclass_fields__.keys()
     kwargs: dict[str, Any] = {
         "output_dir": str(Path(tempfile.mkdtemp(prefix="cppo_smoke_"))),
@@ -220,6 +232,7 @@ def _build_args(**overrides: Any) -> GRPOConfig:
 def run_two_step_smoke_train(
     model_id: str, *, cppo: bool, allocation: bool, cppo_strategy: str = CPPO_STRATEGY_AUTHOR_EXACT
 ) -> list[dict[str, Any]]:
+    """Run 2-step smoke train and return trainer log history rows."""
     dataset = _tiny_dataset()
 
     tokenizer = AutoTokenizer.from_pretrained(model_id)
@@ -259,6 +272,7 @@ def run_two_step_smoke_train(
 
 
 def main() -> None:
+    """Execute deterministic smoke checks and optional tiny train smoke."""
     import argparse
 
     parser = argparse.ArgumentParser()

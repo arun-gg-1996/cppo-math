@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Compatibility re-export for reward helpers from `src/cppo/reward.py`."""
+
 import sys
 from pathlib import Path
 

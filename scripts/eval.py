@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Manual checkpoint evaluation entrypoint with pass@k profile support."""
+
 import argparse
 import json
 import os
@@ -8,12 +10,14 @@ from pathlib import Path
 
 
 def _parse_splits(raw: str | None) -> list[str]:
+    """Parse comma-separated split names from CLI."""
     if not raw:
         return []
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
 def main() -> None:
+    """Run eval for selected splits and write summary/details artifacts."""
     parser = argparse.ArgumentParser(description="Evaluate a checkpoint and save pass@k artifacts")
     parser.add_argument("--config", default="config.yaml", help="YAML config path")
     parser.add_argument("--checkpoint", required=True, help="Checkpoint directory or model id")

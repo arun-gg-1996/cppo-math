@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Compatibility launcher that delegates to `scripts/train.py`."""
+
 import runpy
 from pathlib import Path
 

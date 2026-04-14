@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+"""Thin CLI wrapper that launches `cppo.train.main` from YAML config."""
+
 import argparse
 import sys
 from pathlib import Path
 
 
 def main() -> None:
+    """Parse CLI args, wire `src/` import path, and start training."""
     parser = argparse.ArgumentParser(description="CPPO/GRPO training entrypoint")
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument(
@@ -25,6 +28,7 @@ def main() -> None:
     from cppo.train import main as train_main
 
     train_main(config_path=args.config, overrides=args.overrides)
+
 
 if __name__ == "__main__":
     main()
