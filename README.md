@@ -25,7 +25,13 @@ python data/download.py
 This is the default path:
 - `GPU0`: policy training
 - `GPU1`: vLLM server
-- silent training logs (no TRL completion/reward debug table)
+- base model: `Qwen/Qwen2.5-1.5B-Instruct` (CPPO GSM baseline)
+- no TRL completion/reward debug table (`artifacts.save_completions=false` in `config.yaml`)
+- checkpoint eval uses easy/mid splits only (boundary eval disabled)
+- step-0 on-checkpoint eval runs at startup
+- checkpoint `pass@1` is strict (`eval.temperature=0.0`, `eval.top_p=1.0`)
+- periodic eval metrics appear as `eval/<split>_n<rows>/pass@1` (not `mid_eval/*`)
+- eval batch size is `256`
 - main config vLLM memory cap: `rollout.vllm_gpu_memory_utilization=0.85`
 
 Terminal A (GPU1, vLLM server):
@@ -45,7 +51,7 @@ Terminal B (GPU0, quiet training):
 screen -S cppo-train
 cd <repo_root>
 source .venv/bin/activate
-CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config config.yaml --set artifacts.save_completions=false --set training.logging_steps=10
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config config.yaml
 ```
 
 Detach with `Ctrl-a d`.
@@ -83,7 +89,7 @@ Split-GPU smoke run (quiet):
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 python scripts/vllm_server.py --config configs/smoke/server_gpu_split_smoke.yaml --set rollout.vllm_gpu_memory_utilization=0.85
-CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config configs/smoke/server_gpu_split_smoke.yaml --set artifacts.save_completions=false --set training.logging_steps=10
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config configs/smoke/server_gpu_split_smoke.yaml --set artifacts.save_completions=false
 ```
 
 Manual eval on a checkpoint:

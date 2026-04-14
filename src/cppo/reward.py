@@ -233,6 +233,20 @@ def _extract_single_number_value(s: str) -> float | None:
         return None
 
 
+def _extract_last_number_value(s: str) -> float | None:
+    """Extract the final numeric literal from a string, else return None."""
+    if not s:
+        return None
+    txt = s.replace(",", "")
+    nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", txt)
+    if not nums:
+        return None
+    try:
+        return float(nums[-1])
+    except Exception:
+        return None
+
+
 def _split_top_level_commas(s: str) -> list[str]:
     """Split comma-separated tuple parts while respecting bracket nesting."""
     parts: list[str] = []
@@ -369,11 +383,29 @@ def _ground_truth_candidates(ground_truth: str) -> list[str]:
 def check_answer(predicted_text: str, ground_truth: str) -> float:
     """Binary reward: 1.0 if equivalent, else 0.0."""
     pred = extract_prediction_answer(predicted_text)
-    if pred is None:
+    gt_cands = _ground_truth_candidates(ground_truth)
+    def _raw_numeric_fallback() -> float:
+        # Official GSM-style numeric fallback on raw completion:
+        # if tag extraction is missing/noisy but output contains a clear numeric answer,
+        # accept single-number or last-number matches.
+        gt_nums = [x for x in (_extract_single_number_value(gt) for gt in gt_cands) if x is not None]
+        if not gt_nums:
+            return 0.0
+        raw = (predicted_text or "").replace("$", "").replace("%", "")
+        p_single = _extract_single_number_value(raw)
+        p_last = _extract_last_number_value(raw)
+        for g in gt_nums:
+            if p_single is not None and abs(p_single - g) <= 1e-8:
+                return 1.0
+            if p_last is not None and abs(p_last - g) <= 1e-8:
+                return 1.0
         return 0.0
 
+    if pred is None:
+        return _raw_numeric_fallback()
+
     pred_low = pred.strip().lower()
-    for gt in _ground_truth_candidates(ground_truth):
+    for gt in gt_cands:
         gt_low = gt.strip().lower()
         if pred == gt or pred_low == gt_low:
             return 1.0
@@ -381,7 +413,7 @@ def check_answer(predicted_text: str, ground_truth: str) -> float:
             return 1.0
         if equivalent_math(pred, gt):
             return 1.0
-    return 0.0
+    return _raw_numeric_fallback()
 
 
 def score_batch(completions: list[Any], answers: list[str]) -> list[float]:

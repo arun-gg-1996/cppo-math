@@ -137,6 +137,7 @@ class CheckpointArtifactsCallback(TrainerCallback):
                     temperature=float(profile.get("temperature", eval_cfg.get("temperature", 0.6))),
                     top_p=float(profile.get("top_p", eval_cfg.get("top_p", 1.0))),
                     max_new_tokens=int(eval_cfg.get("max_new_tokens", 1024)),
+                    report_k=int(profile.get("report_k")) if profile.get("report_k") is not None else None,
                     limit=int(on_ckpt.get("limit", 0)),
                     evaluator_cfg=eval_cfg.get("evaluator", {}),
                     truncation_retry_enabled=bool(truncation_retry_cfg.get("enabled", False)),

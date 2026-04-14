@@ -117,7 +117,7 @@ def main() -> None:
                     "n_generations": int(n_generations),
                     "temperature": float(temperature),
                     "top_p": float(top_p),
-                    "report_k": int(min(3, n_generations)),
+                    "report_k": int(n_generations),
                 }
             ]
         else:
@@ -136,6 +136,7 @@ def main() -> None:
                 temperature=float(profile["temperature"]),
                 top_p=float(profile["top_p"]),
                 max_new_tokens=max_new_tokens,
+                report_k=int(profile.get("report_k")) if profile.get("report_k") is not None else None,
                 limit=int(args.limit if args.limit is not None else 0),
                 evaluator_cfg=eval_cfg.get("evaluator", {}),
                 truncation_retry_enabled=bool(truncation_retry_cfg.get("enabled", False)),
@@ -154,10 +155,9 @@ def main() -> None:
         split_root.mkdir(parents=True, exist_ok=True)
         with (split_root / "summary.json").open("w", encoding="utf-8") as f:
             json.dump(merged_summary, f, ensure_ascii=False, indent=2)
-        print(
-            f"[ok] split={split} pass@1={float(merged_summary.get('pass@1', 0.0)):.4f} "
-            f"pass@3={float(merged_summary.get('pass@3', 0.0)):.4f} out={split_root}"
-        )
+        pass_keys = sorted([k for k in merged_summary.keys() if isinstance(k, str) and k.startswith("pass@")])
+        pass_bits = " ".join(f"{k}={float(merged_summary.get(k, 0.0)):.4f}" for k in pass_keys)
+        print(f"[ok] split={split} {pass_bits} out={split_root}")
 
     with (root_out / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(aggregate, f, ensure_ascii=False, indent=2)

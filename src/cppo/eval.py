@@ -389,6 +389,7 @@ def evaluate_checkpoint(
     temperature: float,
     top_p: float,
     max_new_tokens: int,
+    report_k: int | None = None,
     limit: int = 0,
     evaluator_cfg: dict[str, Any] | None = None,
     truncation_retry_enabled: bool = False,
@@ -469,7 +470,12 @@ def evaluate_checkpoint(
     retry_count = 0
     total_pass1 = 0
     passk_sum = 0.0
-    k_for_report = min(3, n_generations)
+    # Default legacy behavior keeps pass@3 when n_generations >= 3.
+    # Allow explicit report_k (e.g., official-style pass@16) when provided.
+    if report_k is None:
+        k_for_report = min(3, n_generations)
+    else:
+        k_for_report = max(1, min(int(report_k), int(n_generations)))
     retry_max_tokens = int(truncation_retry_max_new_tokens or max_new_tokens)
     do_retry = bool(truncation_retry_enabled) and int(truncation_retry_max_retries) > 0 and retry_max_tokens > max_new_tokens
 
@@ -552,7 +558,6 @@ def evaluate_checkpoint(
         "top_p": top_p,
         "max_new_tokens": max_new_tokens,
         "pass@1": (total_pass1 / n_probs) if n_probs else 0.0,
-        f"pass@{k_for_report}": (passk_sum / n_probs) if n_probs else 0.0,
         "evaluator_backend_counts": backend_counts,
         "truncation_retry": {
             "enabled": bool(do_retry),
@@ -563,6 +568,8 @@ def evaluate_checkpoint(
         },
         "generation_backend": "vllm_server" if use_server else "local_vllm",
     }
+    if k_for_report != 1:
+        summary[f"pass@{k_for_report}"] = (passk_sum / n_probs) if n_probs else 0.0
     return summary, details
 
 

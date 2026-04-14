@@ -33,7 +33,7 @@ which aligns with:
 
 `RewardStatsCallback` also logs the same aggregate payload directly with:
 
-- `wandb.log(payload, step=global_step)`
+- `wandb.log({"train/<key>": value, ...}, step=global_step)`
 
 so custom reward/data keys are stable in W&B even when trainer log timing differs.
 

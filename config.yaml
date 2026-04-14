@@ -11,3 +11,29 @@ integrations:
   hf_hub:
     enabled: true
     token_env: HF_TOKEN
+
+model:
+  model_name_or_path: Qwen/Qwen2.5-1.5B-Instruct
+  max_prompt_length: 512
+  max_completion_length: 1024
+
+training:
+  batch_size: 16
+  gradient_accumulation_steps: 2
+  generation_batch_size: 16
+  num_iterations: 2
+
+eval:
+  temperature: 0.0
+  top_p: 1.0
+  batch_size: 256
+  passk_profiles:
+    enabled: false
+  on_checkpoint:
+    enabled: true
+    run_at_start: true
+  boundary_eval:
+    enabled: false
+
+artifacts:
+  save_completions: false

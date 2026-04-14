@@ -9,6 +9,21 @@ source .venv/bin/activate
 python data/download.py
 ```
 
+## Pre-Train Evaluator Sanity Check (Full GSM8K)
+
+Run this before training to validate extractor/evaluator behavior on the full GSM8K test set (1319 rows):
+
+```bash
+python scripts/eval.py --config config.yaml \
+  --checkpoint Qwen/Qwen2.5-1.5B-Instruct \
+  --splits gsm8k_test \
+  --n-generations 1 \
+  --temperature 0.0 \
+  --top-p 1.0 \
+  --batch-size 256 \
+  --out-dir runs/pretrain_eval/gsm8k_test_full
+```
+
 ## Default Smoke Test (Split GPU, Silent)
 
 Terminal A (GPU1, vLLM server):
@@ -41,6 +56,15 @@ python scripts/verify_run.py --expect-eval
 
 ## Default Full Run (Split GPU, Silent)
 
+Config defaults for `config.yaml`:
+- base model is `Qwen/Qwen2.5-1.5B-Instruct` (CPPO GSM baseline)
+- no TRL completion/reward debug table (`artifacts.save_completions=false`)
+- checkpoint eval uses easy/mid splits only (boundary eval disabled)
+- step-0 on-checkpoint eval runs at startup
+- checkpoint `pass@1` is strict (`eval.temperature=0.0`, `eval.top_p=1.0`)
+- periodic eval metrics appear as `eval/<split>_n<rows>/pass@1` (not `mid_eval/*`)
+- eval batch size is `256`
+
 Terminal A (GPU1, vLLM server, config default uses `0.85`):
 
 ```bash
@@ -58,7 +82,7 @@ Terminal B (GPU0, quiet full training):
 screen -S cppo-train
 cd <repo_root>
 source .venv/bin/activate
-CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config config.yaml --set artifacts.save_completions=false --set training.logging_steps=10
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --config config.yaml
 ```
 
 Detach with `Ctrl-a d`.

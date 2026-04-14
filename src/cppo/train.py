@@ -298,14 +298,16 @@ class RewardStatsCallback(TrainerCallback):
             if vals:
                 agg[key] = float(np.mean(vals))
         # Inject static reference lines with train key roots.
-        # These become train/kl_ref_floor etc. in W&B through Trainer log rewriting.
         agg["kl_ref_floor"] = float(RUN_REF_LINES["kl_ref_floor"])
         agg["kl_ref_ceiling"] = float(RUN_REF_LINES["kl_ref_ceiling"])
         agg["clip_ratio/ref_min"] = float(RUN_REF_LINES["clip_ratio/ref_min"])
         logs.update(agg)
         if wandb is not None and wandb.run is not None:
             try:
-                wandb.log(agg, step=int(state.global_step))
+                # Keep custom callback metrics in the same train/* namespace
+                # expected by W&B panels (KL overlays, clip overlays, etc.).
+                wb_payload = {f"train/{k}": float(v) for k, v in agg.items()}
+                wandb.log(wb_payload, step=int(state.global_step))
             except Exception:
                 logger.warning("Failed to log reward stats payload to W&B", exc_info=True)
         REWARD_STATS_BUFFER.clear()
@@ -587,6 +589,7 @@ def _run_boundary_eval_stage(
                 temperature=float(profile.get("temperature", eval_cfg.get("temperature", 0.6))),
                 top_p=float(profile.get("top_p", eval_cfg.get("top_p", 1.0))),
                 max_new_tokens=int(eval_cfg.get("max_new_tokens", 1024)),
+                report_k=int(profile.get("report_k")) if profile.get("report_k") is not None else None,
                 limit=int(boundary_cfg.get("limit", 0)),
                 evaluator_cfg=eval_cfg.get("evaluator", {}),
                 truncation_retry_enabled=bool(truncation_retry_cfg.get("enabled", False)),
@@ -705,6 +708,7 @@ def _run_on_checkpoint_eval_stage(
                 temperature=float(profile.get("temperature", eval_cfg.get("temperature", 0.6))),
                 top_p=float(profile.get("top_p", eval_cfg.get("top_p", 1.0))),
                 max_new_tokens=int(eval_cfg.get("max_new_tokens", 1024)),
+                report_k=int(profile.get("report_k")) if profile.get("report_k") is not None else None,
                 limit=int(on_ckpt.get("limit", 0)),
                 evaluator_cfg=eval_cfg.get("evaluator", {}),
                 truncation_retry_enabled=bool(truncation_retry_cfg.get("enabled", False)),
