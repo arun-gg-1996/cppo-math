@@ -637,6 +637,124 @@ def _run_boundary_eval_stage(
         cleanup_merged_eval_model(str(ckpt))
 
 
+def _run_on_checkpoint_eval_stage(
+    *,
+    cfg: dict[str, Any],
+    ckpt: str,
+    stage: str,
+    run_dir: Path,
+    step: int | None = None,
+) -> None:
+    """Run the `eval.on_checkpoint` split suite outside trainer save hooks (e.g., step 0)."""
+    eval_cfg = cfg.get("eval", {})
+    on_ckpt = eval_cfg.get("on_checkpoint", {})
+    if not bool(on_ckpt.get("enabled", False)):
+        return
+    if stage == "start" and not bool(on_ckpt.get("run_at_start", False)):
+        return
+
+    split_map = cfg.get("data", {}).get("eval_splits", {})
+    prompt_cfg = cfg.get("prompt", {})
+    default_system_prompt = str(prompt_cfg.get("system_prompt", ""))
+    per_split_prompt = prompt_cfg.get("eval_system_prompt_by_split", {})
+    primary_split = str(eval_cfg.get("primary_split", ""))
+    split_order = on_ckpt.get("splits") or ([primary_split] if primary_split else list(split_map.keys()))
+    if not split_order:
+        return
+
+    hub_cfg = cfg.get("integrations", {}).get("hf_hub", {})
+    token_env = str(hub_cfg.get("token_env", "HF_TOKEN"))
+    hf_token = os.environ.get(token_env, "")
+    truncation_retry_cfg = eval_cfg.get("truncation_retry", {})
+    profiles = build_eval_profiles(eval_cfg)
+    multi_profile = len(profiles) > 1
+    rollout_cfg = cfg.get("rollout", {})
+    use_server_eval = bool(rollout_cfg.get("use_vllm", True)) and str(rollout_cfg.get("vllm_mode", "")).strip().lower() == "server"
+    server_base_url = str(rollout_cfg.get("vllm_server_base_url", "")).strip()
+    if not server_base_url:
+        use_server_eval = False
+    server_timeout = float(rollout_cfg.get("vllm_server_timeout", 240.0))
+
+    out_root = run_dir / "eval_on_checkpoint" / stage
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    aggregate: dict[str, Any] = {
+        "stage": stage,
+        "checkpoint": ckpt,
+        "primary_split": primary_split,
+        "splits": {},
+    }
+
+    for split in split_order:
+        split = str(split)
+        split_path = Path(str(split_map.get(split, "")))
+        if not split_path.exists():
+            logger.warning("On-checkpoint eval skip split=%s (missing file: %s)", split, split_path)
+            continue
+
+        profile_runs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for profile in profiles:
+            summary, details = evaluate_checkpoint(
+                ckpt=ckpt,
+                split_name=split,
+                split_path=str(split_path),
+                system_prompt=str(per_split_prompt.get(split, default_system_prompt)),
+                hf_token=hf_token,
+                n_generations=int(profile.get("n_generations", eval_cfg.get("n_generations", 1))),
+                batch_size=int(eval_cfg.get("batch_size", 8)),
+                temperature=float(profile.get("temperature", eval_cfg.get("temperature", 0.6))),
+                top_p=float(profile.get("top_p", eval_cfg.get("top_p", 1.0))),
+                max_new_tokens=int(eval_cfg.get("max_new_tokens", 1024)),
+                limit=int(on_ckpt.get("limit", 0)),
+                evaluator_cfg=eval_cfg.get("evaluator", {}),
+                truncation_retry_enabled=bool(truncation_retry_cfg.get("enabled", False)),
+                truncation_retry_max_retries=int(truncation_retry_cfg.get("max_retries", 0)),
+                truncation_retry_max_new_tokens=int(
+                    truncation_retry_cfg.get("retry_max_new_tokens", int(eval_cfg.get("max_new_tokens", 1024)))
+                ),
+                use_vllm_server=bool(use_server_eval),
+                vllm_server_base_url=server_base_url,
+                vllm_server_timeout=server_timeout,
+            )
+            split_out = out_root / split
+            if multi_profile:
+                split_out = split_out / str(profile.get("name", "profile"))
+            save_eval_outputs(summary, details, split_out)
+            profile_runs.append((profile, summary))
+
+        merged_summary = combine_eval_profile_summaries(split, profile_runs)
+        aggregate["splits"][split] = merged_summary
+        with (out_root / split / "summary.json").open("w", encoding="utf-8") as f:
+            json.dump(merged_summary, f, ensure_ascii=False, indent=2)
+
+        if wandb is not None and wandb.run is not None:
+            n_probs = int(merged_summary.get("n_problems", 0))
+            payload: dict[str, float] = {}
+            for key, value in merged_summary.items():
+                if isinstance(key, str) and key.startswith("pass@"):
+                    payload[f"eval/{split}_n{n_probs}/{key}"] = float(value)
+            if payload:
+                if step is None:
+                    wandb.log(payload)
+                else:
+                    wandb.log(payload, step=int(step))
+
+        logger.info(
+            "On-checkpoint eval stage=%s split=%s pass@1=%.4f pass@3=%s",
+            stage,
+            split,
+            float(merged_summary.get("pass@1", 0.0)),
+            f"{float(merged_summary['pass@3']):.4f}" if "pass@3" in merged_summary else "n/a",
+        )
+
+    with (out_root / "summary.json").open("w", encoding="utf-8") as f:
+        json.dump(aggregate, f, ensure_ascii=False, indent=2)
+
+    adapter_merge_cfg = eval_cfg.get("adapter_merge", {})
+    if bool(adapter_merge_cfg.get("cleanup_after_eval", True)):
+        cleanup_merged_eval_model(str(ckpt))
+
+
 def main(config_path: str, overrides: list[str]) -> None:
     """Execute a full training run from a YAML config."""
     cfg = load_config(config_path, overrides=overrides)
@@ -789,6 +907,17 @@ def main(config_path: str, overrides: list[str]) -> None:
     if bool(boundary_cfg.get("enabled", True)) and bool(boundary_cfg.get("run_at_start", True)):
         logger.info("Running boundary eval at start (base model)")
         _run_boundary_eval_stage(
+            cfg=cfg,
+            ckpt=str(model_cfg["model_name_or_path"]),
+            stage="start",
+            run_dir=run_dir,
+            step=0,
+        )
+
+    on_ckpt_cfg = cfg.get("eval", {}).get("on_checkpoint", {})
+    if bool(on_ckpt_cfg.get("enabled", False)) and bool(on_ckpt_cfg.get("run_at_start", False)):
+        logger.info("Running on-checkpoint eval at start (base model)")
+        _run_on_checkpoint_eval_stage(
             cfg=cfg,
             ckpt=str(model_cfg["model_name_or_path"]),
             stage="start",

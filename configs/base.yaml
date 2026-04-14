@@ -161,7 +161,7 @@ training:
 eval:
   primary_split: gsm8k_test
   n_generations: 1
-  batch_size: 8
+  batch_size: 64
   temperature: 0.6
   top_p: 1.0
   max_new_tokens: 1024
@@ -215,6 +215,7 @@ eval:
     - olympiadbench
   on_checkpoint:
     enabled: true
+    run_at_start: false
     splits:
       - gsm8k_test
       - svamp
