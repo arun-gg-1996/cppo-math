@@ -93,10 +93,29 @@ python scripts/train.py --config config.yaml
 
 For strict 2xA100 split mode (author-style): run vLLM on one GPU and training on the other.
 
+`rollout.vllm_gpu_memory_utilization` is a GPU memory fraction cap for vLLM (not a compute utilization target).
+Defaults:
+- smoke config: `0.40`
+- main config: `0.50`
+On a dedicated GPU1 (no training process there), `0.80` to `0.90` is typically fine.
+
 Terminal A (rollout server on GPU 1):
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 python scripts/vllm_server.py --config config.yaml
+```
+
+Quick server test from another terminal:
+
+```bash
+curl -sS http://127.0.0.1:8000/health/
+curl -sS -X POST http://127.0.0.1:8000/generate/ -H "Content-Type: application/json" -d '{"prompts":["2+2 ="],"temperature":0.0,"max_tokens":8}'
+```
+
+Higher-memory server launch example (dedicated GPU1):
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/vllm_server.py --config config.yaml --set rollout.vllm_gpu_memory_utilization=0.85
 ```
 
 Terminal B (policy training on GPU 0):
@@ -183,6 +202,12 @@ Terminal A:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 python scripts/vllm_server.py --config configs/smoke/server_gpu_split_smoke.yaml
+```
+
+Higher-memory smoke server launch example:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/vllm_server.py --config configs/smoke/server_gpu_split_smoke.yaml --set rollout.vllm_gpu_memory_utilization=0.85
 ```
 
 Terminal B:

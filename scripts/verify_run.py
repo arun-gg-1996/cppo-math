@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -33,6 +34,17 @@ def _assert_any(paths: list[Path], label: str, errors: list[str]) -> None:
         errors.append(f"Missing required artifact group: {label}")
 
 
+def _checkpoint_sort_key(path: Path) -> tuple[int, float]:
+    """Sort checkpoints by numeric step, then mtime as tie-breaker."""
+    m = re.search(r"checkpoint-(\d+)$", path.name)
+    step = int(m.group(1)) if m else -1
+    try:
+        mtime = float(path.stat().st_mtime)
+    except Exception:
+        mtime = 0.0
+    return (step, mtime)
+
+
 def main() -> None:
     """Validate one run directory and print pass/fail summary."""
     ap = argparse.ArgumentParser(description="Verify a training run folder has expected artifacts and key metrics.")
@@ -51,7 +63,7 @@ def main() -> None:
     if not checkpoints_root.exists():
         errors.append(f"Missing checkpoints directory: {checkpoints_root}")
 
-    ckpts = sorted([p for p in checkpoints_root.glob("checkpoint-*") if p.is_dir()], key=lambda p: p.name)
+    ckpts = sorted([p for p in checkpoints_root.glob("checkpoint-*") if p.is_dir()], key=_checkpoint_sort_key)
     if not ckpts:
         errors.append(f"No checkpoint-* directories found under {checkpoints_root}")
     else:
@@ -68,18 +80,18 @@ def main() -> None:
                 if isinstance(row, dict):
                     keys.update(row.keys())
 
-            required_metric_keys = [
-                "cppo/pruning_ratio",
-                "cppo/kept_fraction",
-                "cppo/allocation_enabled",
-                "cppo/author_exact_enabled",
-                "reward",
-                "reward_std",
-                "kl",
+            required_metric_aliases = [
+                ("cppo/pruning_ratio", "train/cppo/pruning_ratio"),
+                ("cppo/kept_fraction", "train/cppo/kept_fraction"),
+                ("cppo/allocation_enabled", "train/cppo/allocation_enabled"),
+                ("cppo/author_exact_enabled", "train/cppo/author_exact_enabled"),
+                ("reward", "train/reward"),
+                ("reward_std", "train/reward_std"),
+                ("kl", "train/kl"),
             ]
-            for key in required_metric_keys:
-                if key not in keys:
-                    errors.append(f"Missing metric in trainer_state log_history: {key}")
+            for aliases in required_metric_aliases:
+                if not any(k in keys for k in aliases):
+                    errors.append(f"Missing metric in trainer_state log_history: one of {aliases}")
 
         if args.expect_eval:
             _assert_any(

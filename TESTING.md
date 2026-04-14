@@ -123,12 +123,27 @@ Pass criteria:
 
 What this does:
 - starts rollout service on GPU1
+- `rollout.vllm_gpu_memory_utilization` is a GPU memory fraction cap for vLLM (not compute utilization)
+- smoke default is `0.40`; on dedicated GPU1 use around `0.80` to `0.90` if stable
 
 ```bash
 screen -S cppo-vllm-smoke
 cd <repo_root>
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=1 python scripts/vllm_server.py --config configs/smoke/server_gpu_split_smoke.yaml
+```
+
+Quick server test from another terminal:
+
+```bash
+curl -sS http://127.0.0.1:8000/health/
+curl -sS -X POST http://127.0.0.1:8000/generate/ -H "Content-Type: application/json" -d '{"prompts":["2+2 ="],"temperature":0.0,"max_tokens":8}'
+```
+
+Higher-memory smoke server launch example:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/vllm_server.py --config configs/smoke/server_gpu_split_smoke.yaml --set rollout.vllm_gpu_memory_utilization=0.85
 ```
 
 Detach: `Ctrl-a d`
@@ -187,12 +202,20 @@ Pass criteria:
 
 What this does:
 - launches rollout service for full run
+- main config default is `rollout.vllm_gpu_memory_utilization=0.50`
+- on dedicated GPU1, use around `0.80` to `0.90` for better GPU memory utilization if stable
 
 ```bash
 screen -S cppo-vllm
 cd <repo_root>
 source .venv/bin/activate
 CUDA_VISIBLE_DEVICES=1 python scripts/vllm_server.py --config config.yaml
+```
+
+Higher-memory full-run server launch example:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/vllm_server.py --config config.yaml --set rollout.vllm_gpu_memory_utilization=0.85
 ```
 
 Detach: `Ctrl-a d`
