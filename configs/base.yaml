@@ -126,7 +126,7 @@ rollout:
   vllm_server_port: 8000
   vllm_server_timeout: 240.0
   vllm_group_port: 51216
-  vllm_gpu_memory_utilization: 0.50
+  vllm_gpu_memory_utilization: 0.85
   vllm_enable_sleep_mode: false
   cppo:
     pruning: 0.875
