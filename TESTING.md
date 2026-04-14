@@ -13,6 +13,14 @@ python data/download.py
 
 Run this before training to validate extractor/evaluator behavior on the full GSM8K test set (1319 rows):
 
+Terminal A (GPU1, vLLM server):
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python scripts/vllm_server.py --config config.yaml
+```
+
+Terminal B (GPU0, full pre-train eval):
+
 ```bash
 python scripts/eval.py --config config.yaml \
   --checkpoint Qwen/Qwen2.5-1.5B-Instruct \

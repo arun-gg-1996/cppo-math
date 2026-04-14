@@ -80,6 +80,12 @@ def main() -> None:
     top_p = float(args.top_p if args.top_p is not None else eval_cfg.get("top_p", 1.0))
     max_new_tokens = int(args.max_new_tokens if args.max_new_tokens is not None else eval_cfg.get("max_new_tokens", 1024))
     truncation_retry_cfg = eval_cfg.get("truncation_retry", {})
+    rollout_cfg = cfg.get("rollout", {})
+    use_server_eval = bool(rollout_cfg.get("use_vllm", True)) and str(rollout_cfg.get("vllm_mode", "")).strip().lower() == "server"
+    server_base_url = str(rollout_cfg.get("vllm_server_base_url", "")).strip()
+    if not server_base_url:
+        use_server_eval = False
+    server_timeout = float(rollout_cfg.get("vllm_server_timeout", 240.0))
 
     ckpt = str(Path(args.checkpoint).resolve()) if Path(args.checkpoint).exists() else args.checkpoint
     root_out = Path(args.out_dir).resolve() if args.out_dir else Path(ckpt) / "passk"
@@ -142,6 +148,9 @@ def main() -> None:
                 truncation_retry_enabled=bool(truncation_retry_cfg.get("enabled", False)),
                 truncation_retry_max_retries=int(truncation_retry_cfg.get("max_retries", 0)),
                 truncation_retry_max_new_tokens=int(truncation_retry_cfg.get("retry_max_new_tokens", max_new_tokens)),
+                use_vllm_server=bool(use_server_eval),
+                vllm_server_base_url=server_base_url,
+                vllm_server_timeout=server_timeout,
             )
             out_dir = root_out / split
             if multi_profile:
