@@ -32,8 +32,12 @@ eval:
   on_checkpoint:
     enabled: true
     run_at_start: true
+    limit: 0
   boundary_eval:
     enabled: false
+  mid_eval:
+    enabled: false
+    quick_local_enabled: false
 
 artifacts:
   save_completions: false
