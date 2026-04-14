@@ -28,7 +28,7 @@ eval:
   top_p: 1.0
   batch_size: 256
   passk_profiles:
-    enabled: false
+    enabled: true
   on_checkpoint:
     enabled: true
     run_at_start: true
