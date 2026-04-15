@@ -40,7 +40,7 @@ from .eval import (
 )
 from .evaluator_registry import EvaluatorRegistry
 from .trainer_cppo import CPPOTrainer
-from .reward import check_answer, unwrap_completion, check_format_compliance
+from .reward import unwrap_completion, check_format_compliance
 
 try:
     import wandb
@@ -361,6 +361,7 @@ class MidEvalCallback(TrainerCallback):
         max_prompt_length: int,
         mid_eval_max_new_tokens: int,
         eval_cfg: dict[str, Any],
+        evaluator_cfg: dict[str, Any] | None = None,
         skip_steps: set[int] | None = None,
     ):
         self.tokenizer = tokenizer
@@ -370,6 +371,7 @@ class MidEvalCallback(TrainerCallback):
         self.mid_eval_max_new_tokens = int(mid_eval_max_new_tokens)
         self.done_steps: set[int] = set()
         self.eval_cfg = eval_cfg
+        self.evaluator = EvaluatorRegistry(evaluator_cfg or {})
         self.skip_steps = set(skip_steps or set())
 
     def _render_prompt(self, question: str) -> str:
@@ -414,7 +416,13 @@ class MidEvalCallback(TrainerCallback):
                 )
             gen_tokens = output[0][inputs["input_ids"].shape[1] :]
             text = self.tokenizer.decode(gen_tokens, skip_special_tokens=True)
-            if check_answer(text, str(row["answer"])) == 1.0:
+            eval_res = self.evaluator.score(
+                split_name=str(row.get("source", "unknown")),
+                predicted_text=text,
+                ground_truth=str(row["answer"]),
+                row=row,
+            )
+            if eval_res.score == 1.0:
                 correct += 1
 
         if was_training:
@@ -932,6 +940,7 @@ def main(config_path: str, overrides: list[str]) -> None:
                 max_prompt_length=int(model_cfg["max_prompt_length"]),
                 mid_eval_max_new_tokens=int(mid_eval_cfg.get("max_new_tokens", 1024)),
                 eval_cfg=mid_eval_cfg,
+                evaluator_cfg=cfg.get("eval", {}).get("evaluator", {}),
                 skip_steps=skip_steps,
             )
         )

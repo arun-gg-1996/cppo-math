@@ -15,6 +15,7 @@ logger = logging.getLogger("cppo.evaluator")
 
 DEFAULT_MATH_VERIFY_SPLITS = {
     "gsm8k",
+    "gsm8k_train",
     "gsm8k_test",
     "svamp",
     "gsm_plus",
@@ -43,6 +44,58 @@ def _to_backend_map(raw: Any) -> dict[str, str]:
         if sk and sv:
             out[sk] = sv
     return out
+
+
+def _normalize_split_name(split_name: str) -> str:
+    """Normalize split/source names so train/eval routing stays consistent.
+
+    Examples:
+      - gsm8k_train -> gsm8k
+      - gsm8k_train:openai/gsm8k -> gsm8k
+      - svamp:foo -> svamp
+    """
+    s = str(split_name or "").strip().lower()
+    if not s:
+        return "unknown"
+
+    # Preserve dataset tag before any provider-specific suffix.
+    if ":" in s:
+        s = s.split(":", 1)[0].strip()
+
+    # Normalize separators and drop noisy characters.
+    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+    s = re.sub(r"_+", "_", s)
+    if not s:
+        return "unknown"
+
+    # Canonical aliases for common train/eval variants.
+    if s.startswith("gsm8k_train"):
+        return "gsm8k"
+    if s.startswith("gsm8k_test"):
+        return "gsm8k_test"
+    if s.startswith("gsm8k"):
+        return "gsm8k"
+
+    if s.startswith("svamp"):
+        return "svamp"
+    if s.startswith("gsm_plus"):
+        return "gsm_plus"
+    if s.startswith("asdiv"):
+        return "asdiv"
+    if s.startswith("aime_2024"):
+        return "aime_2024"
+    if s.startswith("aime_2025"):
+        return "aime_2025"
+    if s.startswith("amc_2023"):
+        return "amc_2023"
+    if s.startswith("math_500"):
+        return "math_500"
+    if s.startswith("minerva_math"):
+        return "minerva_math"
+    if s.startswith("olympiadbench"):
+        return "olympiadbench"
+
+    return s
 
 
 def _is_none_like(text: str) -> bool:
@@ -83,6 +136,16 @@ class EvaluatorRegistry:
         self.default_backend = str(self.cfg.get("default_backend", "auto")).strip().lower() or "auto"
         self.backend_by_split = _to_backend_map(self.cfg.get("backend_by_split", {}))
         self.custom_by_split = _to_backend_map(self.cfg.get("custom_by_split", {}))
+        self.backend_by_split_norm = {
+            _normalize_split_name(k): str(v).strip()
+            for k, v in self.backend_by_split.items()
+            if str(k).strip() and str(v).strip()
+        }
+        self.custom_by_split_norm = {
+            _normalize_split_name(k): str(v).strip()
+            for k, v in self.custom_by_split.items()
+            if str(k).strip() and str(v).strip()
+        }
 
         mv_cfg = self.cfg.get("math_verify", {})
         if not isinstance(mv_cfg, dict):
@@ -90,9 +153,10 @@ class EvaluatorRegistry:
         self.mv_enabled = bool(mv_cfg.get("enabled", True))
         raw_mv_splits = mv_cfg.get("splits", [])
         if isinstance(raw_mv_splits, list) and raw_mv_splits:
-            self.mv_splits = {str(x).strip() for x in raw_mv_splits if str(x).strip()}
+            self.mv_splits = {str(x).strip().lower() for x in raw_mv_splits if str(x).strip()}
         else:
             self.mv_splits = set(DEFAULT_MATH_VERIFY_SPLITS)
+        self.mv_splits_norm = {_normalize_split_name(x) for x in self.mv_splits}
 
         self._custom_cache: dict[str, Any] = {}
         self._mv_checked = False
@@ -109,13 +173,23 @@ class EvaluatorRegistry:
         row: dict[str, Any] | None = None,
     ) -> EvalScore:
         """Route one prediction to the configured backend and return score metadata."""
-        split = str(split_name or "").strip()
-        forced = self.backend_by_split.get(split, self.default_backend).strip().lower()
+        split_raw = str(split_name or "").strip()
+        split_norm = _normalize_split_name(split_raw)
+        forced = str(
+            self.backend_by_split.get(split_raw)
+            or self.backend_by_split_norm.get(split_norm)
+            or self.default_backend
+        ).strip().lower()
         if forced == "auto":
-            return self._score_auto(split_name=split, predicted_text=predicted_text, ground_truth=ground_truth, row=row)
+            return self._score_auto(
+                split_name=split_raw,
+                predicted_text=predicted_text,
+                ground_truth=ground_truth,
+                row=row,
+            )
         return self._score_with_backend(
             backend=forced,
-            split_name=split,
+            split_name=split_norm,
             predicted_text=predicted_text,
             ground_truth=ground_truth,
             row=row,
@@ -130,18 +204,32 @@ class EvaluatorRegistry:
         row: dict[str, Any] | None = None,
     ) -> EvalScore:
         """Auto-routing policy: custom -> math-verify -> local fallback."""
-        if split_name in self.custom_by_split:
+        split_raw = str(split_name or "").strip()
+        split_norm = _normalize_split_name(split_raw)
+
+        custom_key = None
+        if split_raw in self.custom_by_split:
+            custom_key = split_raw
+        elif split_norm in self.custom_by_split_norm:
+            custom_key = split_norm
+
+        if custom_key is not None:
             return self._score_with_backend(
                 backend="custom",
-                split_name=split_name,
+                split_name=custom_key,
                 predicted_text=predicted_text,
                 ground_truth=ground_truth,
                 row=row,
             )
-        if self.mv_enabled and split_name in self.mv_splits:
+
+        use_math_verify = (
+            split_raw.lower() in self.mv_splits
+            or split_norm in self.mv_splits_norm
+        )
+        if self.mv_enabled and use_math_verify:
             mv = self._score_with_backend(
                 backend="math_verify",
-                split_name=split_name,
+                split_name=split_norm,
                 predicted_text=predicted_text,
                 ground_truth=ground_truth,
                 row=row,
@@ -150,7 +238,7 @@ class EvaluatorRegistry:
                 return mv
         return self._score_with_backend(
             backend="fallback_sympy",
-            split_name=split_name,
+            split_name=split_norm,
             predicted_text=predicted_text,
             ground_truth=ground_truth,
             row=row,
@@ -199,30 +287,36 @@ class EvaluatorRegistry:
 
     def _load_custom_callable(self, split_name: str):
         """Load and cache custom evaluator callable for a split."""
-        spec = self.custom_by_split.get(split_name, "")
+        split_raw = str(split_name or "").strip()
+        split_norm = _normalize_split_name(split_raw)
+        spec = (
+            self.custom_by_split.get(split_raw, "")
+            or self.custom_by_split_norm.get(split_norm, "")
+        )
         if not spec:
             return None
-        if split_name in self._custom_cache:
-            return self._custom_cache[split_name]
+        cache_key = split_norm
+        if cache_key in self._custom_cache:
+            return self._custom_cache[cache_key]
         mod_name, sep, fn_name = spec.partition(":")
         if not sep:
             logger.warning(
                 "Invalid custom evaluator spec for split=%s: '%s' (expected 'module:function')",
-                split_name,
+                split_raw or split_norm,
                 spec,
             )
-            self._custom_cache[split_name] = None
+            self._custom_cache[cache_key] = None
             return None
         try:
             mod = importlib.import_module(mod_name)
             fn = getattr(mod, fn_name)
             if not callable(fn):
                 raise TypeError(f"{spec} is not callable")
-            self._custom_cache[split_name] = fn
+            self._custom_cache[cache_key] = fn
             return fn
         except Exception as e:
-            logger.warning("Failed to import custom evaluator '%s' for split=%s (%s)", spec, split_name, e)
-            self._custom_cache[split_name] = None
+            logger.warning("Failed to import custom evaluator '%s' for split=%s (%s)", spec, split_raw or split_norm, e)
+            self._custom_cache[cache_key] = None
             return None
 
     def _ensure_math_verify(self) -> None:

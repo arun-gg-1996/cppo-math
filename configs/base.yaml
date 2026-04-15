@@ -194,6 +194,7 @@ eval:
       enabled: true
       splits:
         - gsm8k
+        - gsm8k_train
         - gsm8k_test
         - svamp
         - gsm_plus
