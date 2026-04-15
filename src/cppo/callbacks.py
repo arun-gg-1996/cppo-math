@@ -274,7 +274,11 @@ class CheckpointArtifactsCallback(TrainerCallback):
                 for split, summary in split_metrics.items():
                     n_probs = int(summary.get("n_problems", 0))
                     for key, value in summary.items():
-                        if isinstance(key, str) and key.startswith("pass@"):
+                        if isinstance(key, str) and (
+                            key.startswith("pass@")
+                            or key.startswith("cppo_pass@")
+                            or key == "cppo_eval_accuracy_percent"
+                        ):
                             wb_payload[f"eval/{split}_n{n_probs}/{key}"] = float(value)
             wb_payload["eval_timing/checkpoint_seconds"] = float(eval_elapsed)
             wb_payload["eval_timing/checkpoint_cumulative_seconds"] = float(self.eval_total_seconds)
