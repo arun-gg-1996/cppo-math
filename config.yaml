@@ -34,7 +34,7 @@ eval:
     enabled: true
   on_checkpoint:
     enabled: true
-    run_at_start: false
+    run_at_start: true
     limit: 0
   boundary_eval:
     enabled: false
