@@ -137,6 +137,9 @@ rollout:
 reward:
   accuracy_weight: 0.8
   format_weight: 0.2
+  accuracy_mode: strict_binary
+  format_mode: strict
+  clip_to_unit: true
 
 training:
   world_size: 1

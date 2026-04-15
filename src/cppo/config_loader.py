@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import os
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -178,9 +179,11 @@ def _validate_generation_math(cfg: dict[str, Any]) -> None:
     num_iterations = int(_require(cfg, "training.num_iterations"))
     generate_every = steps_per_generation * num_iterations
     if grad_acc % generate_every != 0:
-        raise ValueError(
-            "Unsafe GRPO/CPPO setup: gradient_accumulation_steps must be divisible by generate_every. "
-            f"Got grad_acc={grad_acc}, generate_every={generate_every}"
+        warnings.warn(
+            "Non-divisible accumulation/generation schedule: "
+            f"grad_acc={grad_acc}, generate_every={generate_every}. "
+            "This is allowed for CPPO parity runs but can change off-policy behavior.",
+            RuntimeWarning,
         )
 
 

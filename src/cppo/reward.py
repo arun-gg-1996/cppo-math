@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover
 
 _TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
 _FORMAT_PATTERN = re.compile(r"^\s*<think>.*?</think>\s*<answer>.*?</answer>\s*$", re.DOTALL)
+_CPPO_FORMAT_PATTERN = re.compile(r"^<think>.*?</think>\n<answer>.*?</answer>$", re.DOTALL | re.MULTILINE)
 
 
 def unwrap_completion(completion: Any) -> str:
@@ -95,6 +96,14 @@ def check_format_compliance(predicted_text: str) -> float:
         return 0.0
     answer = extract_answer_tag(txt)
     return 1.0 if answer is not None and answer.strip() else 0.0
+
+
+def cppo_format_compliance(predicted_text: str) -> float:
+    """CPPO GSM-style format check used in official rewards_gsm.py."""
+    if not predicted_text:
+        return 0.0
+    txt = str(predicted_text)
+    return 1.0 if _CPPO_FORMAT_PATTERN.match(txt) is not None else 0.0
 
 
 def extract_code_fence(text: str) -> str | None:
@@ -378,6 +387,71 @@ def _ground_truth_candidates(ground_truth: str) -> list[str]:
             seen.add(cc)
             out.append(cc)
     return out
+
+
+def _cppo_dataset_answer(text: str) -> str | None:
+    """CPPO GSM dataset answer extraction (`####`) with graceful fallback."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    if "####" in raw:
+        raw = raw.split("####", 1)[1].strip()
+    raw = raw.replace(",", "")
+    return raw or None
+
+
+def _cppo_answer_tag(text: str) -> str | None:
+    """CPPO GSM model output extraction: last `<answer>...</answer>` only."""
+    out = extract_answer_tag(text)
+    if not out:
+        return None
+    out = out.strip().replace(",", "")
+    return None if out == "..." else out
+
+
+def cppo_gsm_accuracy_reward(predicted_text: str, ground_truth: str) -> float:
+    """CPPO GSM-style shaped accuracy reward (2.0 exact / 1.5 numeric / 0.0)."""
+    pred = _cppo_answer_tag(predicted_text)
+    gt = _cppo_dataset_answer(ground_truth)
+    if not pred or not gt:
+        return 0.0
+    if pred == gt:
+        return 2.0
+    pred_num = _extract_single_number_value(str(pred))
+    gt_num = _extract_single_number_value(str(gt))
+    if pred_num is not None and gt_num is not None and abs(pred_num - gt_num) <= 1e-8:
+        return 1.5
+    return 0.0
+
+
+def cppo_gsm_eval_match(predicted_text: str, ground_truth: str) -> bool:
+    """CPPO eval_gsm-style boolean correctness for checkpoint comparison."""
+    gt = _cppo_dataset_answer(ground_truth)
+    if not gt:
+        return False
+
+    def _match(candidate: str | None, target: str) -> bool:
+        if candidate is None:
+            return False
+        c = str(candidate).strip().replace(",", "")
+        if c == target:
+            return True
+        c_single = _extract_single_number_value(c)
+        try:
+            t_float = float(target)
+        except Exception:
+            t_float = None
+        if c_single is not None and t_float is not None and abs(c_single - t_float) <= 1e-8:
+            return True
+        c_last = _extract_last_number_value(c)
+        t_last = _extract_last_number_value(target)
+        if c_last is not None and t_last is not None and abs(c_last - t_last) <= 1e-8:
+            return True
+        return False
+
+    if _match(predicted_text, gt):
+        return True
+    return _match(_cppo_answer_tag(predicted_text), gt)
 
 
 def check_answer(predicted_text: str, ground_truth: str) -> float:

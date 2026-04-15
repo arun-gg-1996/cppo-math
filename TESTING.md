@@ -71,7 +71,18 @@ Config defaults for `config.yaml`:
 - step-0 on-checkpoint eval runs at startup
 - checkpoint `pass@1` is strict (`eval.temperature=0.0`, `eval.top_p=1.0`)
 - periodic eval metrics appear as `eval/<split>_n<rows>/pass@1` (not `mid_eval/*`)
+- GSM8K also logs CPPO-style comparator metrics:
+  `eval/gsm8k_test_n1319/cppo_pass@1`,
+  `eval/gsm8k_test_n1319/cppo_pass@3`,
+  `eval/gsm8k_test_n1319/cppo_eval_accuracy_percent`
 - eval batch size is `256`
+- default `config.yaml` parity knobs:
+  `training.gradient_accumulation_steps=1`,
+  `reward.accuracy_mode=cppo_gsm`,
+  `reward.format_mode=cppo`,
+  `reward.accuracy_weight=1.0`,
+  `reward.format_weight=1.0`,
+  `reward.clip_to_unit=false`
 
 Terminal A (GPU1, vLLM server, config default uses `0.85`):
 

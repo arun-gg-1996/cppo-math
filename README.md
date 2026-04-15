@@ -31,8 +31,14 @@ This is the default path:
 - step-0 on-checkpoint eval runs at startup
 - checkpoint `pass@1` is strict (`eval.temperature=0.0`, `eval.top_p=1.0`)
 - periodic eval metrics appear as `eval/<split>_n<rows>/pass@1` (not `mid_eval/*`)
+- for GSM8K, CPPO-style comparator metrics are also logged:
+  `eval/gsm8k_test_n1319/cppo_pass@1`, `eval/gsm8k_test_n1319/cppo_pass@3`,
+  `eval/gsm8k_test_n1319/cppo_eval_accuracy_percent`
 - eval batch size is `256`
 - main config vLLM memory cap: `rollout.vllm_gpu_memory_utilization=0.85`
+- default reward parity mode in `config.yaml`:
+  `reward.accuracy_mode=cppo_gsm`, `reward.format_mode=cppo`,
+  `reward.accuracy_weight=1.0`, `reward.format_weight=1.0`, `reward.clip_to_unit=false`
 
 Terminal A (GPU1, vLLM server):
 

@@ -19,7 +19,7 @@ model:
 
 training:
   batch_size: 16
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 1
   generation_batch_size: 16
   num_iterations: 2
 
@@ -41,3 +41,10 @@ eval:
 
 artifacts:
   save_completions: false
+
+reward:
+  accuracy_weight: 1.0
+  format_weight: 1.0
+  accuracy_mode: cppo_gsm
+  format_mode: cppo
+  clip_to_unit: false

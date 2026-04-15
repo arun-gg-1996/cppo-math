@@ -14,6 +14,7 @@ import requests
 from transformers import AutoTokenizer
 
 from .evaluator_registry import EvaluatorRegistry
+from .reward import cppo_gsm_eval_match
 
 logger = logging.getLogger("cppo.eval")
 MERGED_EVAL_MODEL_CACHE: dict[str, str] = {}
@@ -102,9 +103,22 @@ def combine_eval_profile_summaries(
             metric_val = summary.get("pass@1")
         if isinstance(metric_val, (int, float)):
             merged[metric_key] = float(metric_val)
+        cppo_key = f"cppo_pass@{report_k}"
+        cppo_val = summary.get(cppo_key)
+        if cppo_val is None and report_k == 1:
+            cppo_val = summary.get("cppo_pass@1")
+        if isinstance(cppo_val, (int, float)):
+            merged[cppo_key] = float(cppo_val)
+        cppo_acc = summary.get("cppo_eval_accuracy_percent")
+        if isinstance(cppo_acc, (int, float)):
+            merged["cppo_eval_accuracy_percent"] = float(cppo_acc)
 
     if "pass@1" not in merged and isinstance(first_summary.get("pass@1"), (int, float)):
         merged["pass@1"] = float(first_summary["pass@1"])
+    if "cppo_pass@1" not in merged and isinstance(first_summary.get("cppo_pass@1"), (int, float)):
+        merged["cppo_pass@1"] = float(first_summary["cppo_pass@1"])
+    if "cppo_eval_accuracy_percent" not in merged and isinstance(first_summary.get("cppo_eval_accuracy_percent"), (int, float)):
+        merged["cppo_eval_accuracy_percent"] = float(first_summary["cppo_eval_accuracy_percent"])
 
     return merged
 
@@ -469,7 +483,9 @@ def evaluate_checkpoint(
     retry_candidates = 0
     retry_count = 0
     total_pass1 = 0
+    total_cppo_pass1 = 0
     passk_sum = 0.0
+    cppo_passk_sum = 0.0
     # Default legacy behavior keeps pass@3 when n_generations >= 3.
     # Allow explicit report_k (e.g., official-style pass@16) when provided.
     if report_k is None:
@@ -478,6 +494,8 @@ def evaluate_checkpoint(
         k_for_report = max(1, min(int(report_k), int(n_generations)))
     retry_max_tokens = int(truncation_retry_max_new_tokens or max_new_tokens)
     do_retry = bool(truncation_retry_enabled) and int(truncation_retry_max_retries) > 0 and retry_max_tokens > max_new_tokens
+
+    is_gsm_split = str(split_name).strip().lower().startswith("gsm8k")
 
     for i in range(0, len(problems), batch_size):
         batch_problems = problems[i : i + batch_size]
@@ -512,6 +530,7 @@ def evaluate_checkpoint(
         for prob, req_outs in zip(batch_problems, batch_completions, strict=True):
             gt = str(prob["answer"])
             scores: list[float] = []
+            cppo_scores: list[float] = []
             texts: list[str] = []
             used_backends: list[str] = []
             for item in req_outs:
@@ -525,6 +544,7 @@ def evaluate_checkpoint(
                 score = eval_res.score
                 texts.append(text)
                 scores.append(score)
+                cppo_scores.append(1.0 if (is_gsm_split and cppo_gsm_eval_match(text, gt)) else 0.0)
                 used_backends.append(eval_res.backend)
                 backend_counts[eval_res.backend] = backend_counts.get(eval_res.backend, 0) + 1
 
@@ -532,6 +552,10 @@ def evaluate_checkpoint(
             p1 = 1 if (scores and scores[0] == 1.0) else 0
             total_pass1 += p1
             passk_sum += _pass_at_k(n_generations, c, k_for_report)
+            c_cppo = int(sum(1 for s in cppo_scores if s == 1.0))
+            p1_cppo = 1 if (cppo_scores and cppo_scores[0] == 1.0) else 0
+            total_cppo_pass1 += p1_cppo
+            cppo_passk_sum += _pass_at_k(n_generations, c_cppo, k_for_report)
 
             details.append(
                 {
@@ -540,9 +564,12 @@ def evaluate_checkpoint(
                     "difficulty": prob.get("difficulty", "unknown"),
                     "answer": gt,
                     "scores": scores,
+                    "scores_cppo": cppo_scores,
                     "score_backends": used_backends,
                     "num_correct": c,
+                    "num_correct_cppo": c_cppo,
                     "pass@1": float(p1),
+                    "cppo_pass@1": float(p1_cppo),
                     "completions": texts,
                 }
             )
@@ -568,8 +595,13 @@ def evaluate_checkpoint(
         },
         "generation_backend": "vllm_server" if use_server else "local_vllm",
     }
+    if is_gsm_split:
+        summary["cppo_pass@1"] = (total_cppo_pass1 / n_probs) if n_probs else 0.0
+        summary["cppo_eval_accuracy_percent"] = ((100.0 * total_cppo_pass1) / n_probs) if n_probs else 0.0
     if k_for_report != 1:
         summary[f"pass@{k_for_report}"] = (passk_sum / n_probs) if n_probs else 0.0
+        if is_gsm_split:
+            summary[f"cppo_pass@{k_for_report}"] = (cppo_passk_sum / n_probs) if n_probs else 0.0
     return summary, details
 
 

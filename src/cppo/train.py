@@ -40,7 +40,12 @@ from .eval import (
 )
 from .evaluator_registry import EvaluatorRegistry
 from .trainer_cppo import CPPOTrainer
-from .reward import unwrap_completion, check_format_compliance
+from .reward import (
+    unwrap_completion,
+    check_format_compliance,
+    cppo_format_compliance,
+    cppo_gsm_accuracy_reward,
+)
 
 try:
     import wandb
@@ -69,6 +74,9 @@ PROCESSED_BY_DIFFICULTY: dict[str, int] = {}
 RUN_REWARD_ACCURACY_WEIGHT = 1.0
 RUN_REWARD_FORMAT_WEIGHT = 1.0
 RUN_REWARD_EVALUATOR = EvaluatorRegistry({"default_backend": "fallback_sympy"})
+RUN_REWARD_ACCURACY_MODE = "strict_binary"
+RUN_REWARD_FORMAT_MODE = "strict"
+RUN_REWARD_CLIP_TO_UNIT = True
 
 
 def _label_key(raw: Any) -> str:
@@ -209,25 +217,35 @@ def _reward_fn(completions: list[Any], answer: list[str], **kwargs: Any) -> list
     evaluator_backends: list[str] = []
     for i in range(n):
         text = unwrap_completion(completions[i])
-        eval_res = RUN_REWARD_EVALUATOR.score(
-            split_name=sources[i],
-            predicted_text=text,
-            ground_truth=str(answers[i]) if i < len(answers) else "",
-            row={
-                "id": ids[i],
-                "source": sources[i],
-                "difficulty": diffs[i],
-            },
-        )
-        accuracy_scores.append(float(eval_res.score))
-        evaluator_backends.append(_label_key(eval_res.backend))
+        gt = str(answers[i]) if i < len(answers) else ""
+        if RUN_REWARD_ACCURACY_MODE == "cppo_gsm":
+            accuracy_scores.append(float(cppo_gsm_accuracy_reward(text, gt)))
+            evaluator_backends.append("cppo_gsm")
+        else:
+            eval_res = RUN_REWARD_EVALUATOR.score(
+                split_name=sources[i],
+                predicted_text=text,
+                ground_truth=gt,
+                row={
+                    "id": ids[i],
+                    "source": sources[i],
+                    "difficulty": diffs[i],
+                },
+            )
+            accuracy_scores.append(float(eval_res.score))
+            evaluator_backends.append(_label_key(eval_res.backend))
 
-    format_scores = [check_format_compliance(unwrap_completion(c)) for c in completions]
+    if RUN_REWARD_FORMAT_MODE == "cppo":
+        format_scores = [cppo_format_compliance(unwrap_completion(c)) for c in completions]
+    else:
+        format_scores = [check_format_compliance(unwrap_completion(c)) for c in completions]
     scores: list[float] = []
     for a, f in zip(accuracy_scores, format_scores):
         raw_score = (RUN_REWARD_ACCURACY_WEIGHT * a) + (RUN_REWARD_FORMAT_WEIGHT * f)
-        # Keep reward bounded to [0, 1] even if custom evaluator/weights drift.
-        scores.append(float(max(0.0, min(1.0, raw_score))))
+        if RUN_REWARD_CLIP_TO_UNIT:
+            # Legacy default: keep reward bounded to [0, 1].
+            raw_score = max(0.0, min(1.0, raw_score))
+        scores.append(float(raw_score))
     if scores:
         reward_arr = np.array(scores, dtype=np.float32)
         acc_arr = np.array(accuracy_scores, dtype=np.float32)
@@ -666,7 +684,11 @@ def _run_boundary_eval_stage(
             n_probs = int(merged_summary.get("n_problems", 0))
             payload: dict[str, float] = {}
             for key, value in merged_summary.items():
-                if isinstance(key, str) and key.startswith("pass@"):
+                if isinstance(key, str) and (
+                    key.startswith("pass@")
+                    or key.startswith("cppo_pass@")
+                    or key == "cppo_eval_accuracy_percent"
+                ):
                     payload[f"eval_boundary/{stage}/{split}_n{n_probs}/{key}"] = float(value)
             if payload:
                 if step is not None:
@@ -791,7 +813,11 @@ def _run_on_checkpoint_eval_stage(
             n_probs = int(merged_summary.get("n_problems", 0))
             payload: dict[str, float] = {}
             for key, value in merged_summary.items():
-                if isinstance(key, str) and key.startswith("pass@"):
+                if isinstance(key, str) and (
+                    key.startswith("pass@")
+                    or key.startswith("cppo_pass@")
+                    or key == "cppo_eval_accuracy_percent"
+                ):
                     payload[f"eval/{split}_n{n_probs}/{key}"] = float(value)
             if payload:
                 if step is not None:
@@ -833,11 +859,31 @@ def main(config_path: str, overrides: list[str]) -> None:
     global RUN_REWARD_ACCURACY_WEIGHT
     global RUN_REWARD_FORMAT_WEIGHT
     global RUN_REWARD_EVALUATOR
+    global RUN_REWARD_ACCURACY_MODE
+    global RUN_REWARD_FORMAT_MODE
+    global RUN_REWARD_CLIP_TO_UNIT
     RUN_REF_LINES = _build_ref_lines(cfg)
     reward_cfg = cfg.get("reward", {})
     RUN_REWARD_ACCURACY_WEIGHT = float(reward_cfg.get("accuracy_weight", 1.0))
     RUN_REWARD_FORMAT_WEIGHT = float(reward_cfg.get("format_weight", 1.0))
     RUN_REWARD_EVALUATOR = EvaluatorRegistry(cfg.get("eval", {}).get("evaluator", {}))
+    RUN_REWARD_ACCURACY_MODE = str(reward_cfg.get("accuracy_mode", "strict_binary")).strip().lower() or "strict_binary"
+    RUN_REWARD_FORMAT_MODE = str(reward_cfg.get("format_mode", "strict")).strip().lower() or "strict"
+    RUN_REWARD_CLIP_TO_UNIT = bool(reward_cfg.get("clip_to_unit", True))
+    if RUN_REWARD_ACCURACY_MODE not in {"strict_binary", "cppo_gsm"}:
+        logger.warning("Unknown reward.accuracy_mode=%s; falling back to strict_binary", RUN_REWARD_ACCURACY_MODE)
+        RUN_REWARD_ACCURACY_MODE = "strict_binary"
+    if RUN_REWARD_FORMAT_MODE not in {"strict", "cppo"}:
+        logger.warning("Unknown reward.format_mode=%s; falling back to strict", RUN_REWARD_FORMAT_MODE)
+        RUN_REWARD_FORMAT_MODE = "strict"
+    logger.info(
+        "Reward config: accuracy_mode=%s format_mode=%s clip_to_unit=%s weights=(accuracy=%.3f, format=%.3f)",
+        RUN_REWARD_ACCURACY_MODE,
+        RUN_REWARD_FORMAT_MODE,
+        RUN_REWARD_CLIP_TO_UNIT,
+        RUN_REWARD_ACCURACY_WEIGHT,
+        RUN_REWARD_FORMAT_WEIGHT,
+    )
     run_dir = Path(cfg["paths"]["run_dir"])
     run_dir.mkdir(parents=True, exist_ok=True)
     checkpoints_root = run_dir / "checkpoints"
