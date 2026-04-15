@@ -10,10 +10,11 @@ This module keeps two CPPO modes:
 import copy
 import math
 import random
-from typing import Any
+from typing import Any, Dict, Union
 
 import numpy as np
 import torch
+import torch.nn as nn
 from trl import GRPOTrainer
 from trl.trainer.grpo_trainer import disable_gradient_checkpointing, nanstd, pad, use_adapter
 
@@ -392,6 +393,10 @@ class CPPOTrainer(GRPOTrainer):
         if not all_kept_completion_ids:
             raise RuntimeError("CPPO pruning removed all samples in the batch.")
 
+        # Free cached generation memory before padding/forward passes so the backward
+        # has the full GPU budget available.
+        torch.cuda.empty_cache()
+
         prompt_tensors = [torch.tensor(ids, device=device) for ids in all_kept_prompt_ids]
         completion_tensors = [torch.tensor(ids, device=device) for ids in all_kept_completion_ids]
         prompt_mask_tensors = [torch.ones_like(ids, dtype=torch.long) for ids in prompt_tensors]
@@ -540,3 +545,12 @@ class CPPOTrainer(GRPOTrainer):
         if ref_per_token_logps is not None:
             output["ref_per_token_logps"] = ref_per_token_logps
         return output
+
+    def training_step(
+        self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]], num_items_in_batch=None
+    ) -> torch.Tensor:
+        loss = super().training_step(model, inputs, num_items_in_batch)
+        # Match CPPO authors: free CUDA cache after each step so next generation round
+        # starts with a clean memory budget.
+        torch.cuda.empty_cache()
+        return loss
